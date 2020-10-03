@@ -34,7 +34,7 @@ def log(string):
 def int_to_bytes(n):
 	res = b''
 	while n > 0:
-		n, b = divmod(PORT, 256)
+		n, b = divmod(n, 256)
 		res = bytes([b]) + res
 
 	return res
