@@ -1,10 +1,8 @@
 from socket import socket
 from multiprocessing import Process
 from sys import stdout
-from os import chdir, getpid
+from os import getpid
 import sqlite3
-import string
-import random
 from hashlib import pbkdf2_hmac as password_hash
 from secrets import token_bytes, token_hex
 
@@ -78,12 +76,12 @@ def get_var_len_string(conn, length_of_lenght = 1):
 def get_login(conn):
 	token = get_data(conn, 32)
 	db_cursor.execute("SELECT login FROM tokens WHERE token = ?", (token,))
-	row = db_cursor.fetchone();
+	row = db_cursor.fetchone()
 	if row == None:
 		return_status(conn, 0x15)
 		return None
 	else:
-		return row[0];
+		return row[0]
 
 
 
@@ -113,9 +111,9 @@ def storage_server_response(conn, code):
 
 def handle_client(conn, addr):
 	log('Got connection from client {}'.format(addr))
-	id = get_int(conn);
+	id = get_int(conn)
 
-	if False: # for alligning conditions below
+	if False: # for aligning conditions below
 		pass
 
 	elif (id == 0x00): # logout
@@ -212,7 +210,6 @@ def handle_client(conn, addr):
 	else: # unknown id
 		pass # TODO: return error
 
-	# stdout.flush()
 
 
 
@@ -220,9 +217,9 @@ def handle_client(conn, addr):
 
 def handle_storage_server(conn, addr):
 	log('Got connection from storage server {}'.format(addr))
-	id = get_int(conn);
+	id = get_int(conn)
 
-	if False: # for alligning conditions below
+	if False: # for aligning conditions below
 		pass
 
 	elif (id == 0x00): # new storage server
@@ -250,10 +247,10 @@ if __name__ == '__main__':
 	s.listen()
 
 	log('Server started!')
-	log('Waiting for clients...')
+	log('Waiting for connections...')
 
 	while True:
-		conn, addr = s.accept()	 # Establish connection with client.
+		conn, addr = s.accept()
 		p = Process(target = get_function_by_addr(addr), args = (conn, addr))
 		p.start()
 		#p.join()
