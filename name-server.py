@@ -5,7 +5,7 @@ from os import chdir, getpid
 import sqlite3
 import string
 import random
-import hashlib
+from hashlib import pbkdf2_hmac as password_hash
 from secrets import token_bytes, token_hex
 
 
@@ -35,15 +35,15 @@ db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
        login        VARCHAR(20) UNIQUE                NOT NULL,
-       password     BLOB(16),
-       salt         BLOB(5)
+       password     BLOB(16)                          NOT NULL,
+       salt         BLOB(5)                           NOT NULL
     );
 ''')
 
 db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS tokens (
        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-       login        VARCHAR(20) UNIQUE                NOT NULL,
+       login        VARCHAR(20)                       NOT NULL,
        token        BLOB(32)    UNIQUE                NOT NULL
     );
 ''')
@@ -78,7 +78,9 @@ def return_error(conn, error_code):
 	conn.send(bytes([error_code]))
 	conn.close()
 
-def return_token(conn, token):
+def return_token(conn, login):
+	token = token_bytes(32)
+	db_cursor.execute("INSERT INTO tokens (login, token) VALUES (?, ?);", (login, sqlite3.Binary(token)))
 	conn.send(b'\x00')
 	conn.send(token)
 	conn.close()
@@ -105,16 +107,25 @@ def handle_client(conn, addr):
 			else:
 				# creating user
 				salt = token_bytes(5)
-				hashed_password = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+				hashed_password = password_hash('sha256', password.encode('utf-8'), salt, 100000)
 				db_cursor.execute("INSERT INTO users (login, password, salt) VALUES (?, ?, ?);", (login, sqlite3.Binary(hashed_password), sqlite3.Binary(salt)))
-				# create token
-				token = token_bytes(32)
-				db_cursor.execute("INSERT INTO tokens (login, token) VALUES (?, ?);", (login, sqlite3.Binary(token)))
-				return_token(conn, token)
+				return_token(conn, login)
 
 	elif (id == 0x02): # login
 		login = get_fixed_len_string(conn, 20)
 		password = get_var_len_string(conn)
+
+		db_cursor.execute("SELECT password, salt FROM users WHERE login = ?;", (login,))
+		row = db_cursor.fetchone()
+		if not row:
+			return_error(conn, 0x13) # No such user
+		else:
+			hashed_password_from_db, salt = row
+			hashed_password = password_hash('sha256', password.encode('utf-8'), salt, 100000)
+			if (hashed_password != hashed_password_from_db):
+				return_error(conn, 0x14)
+			else:
+				return_token(conn, login)
 
 	elif (id == 0x03): # initialize
 		token = get_data(conn, 32)
