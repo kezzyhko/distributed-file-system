@@ -95,6 +95,9 @@ def handle_client(conn, addr):
 
 	if False: # for alligning conditions below
 		pass
+	elif (id == 0x00): # logout
+		token = get_data(conn, 32)
+		db_cursor.execute("DELETE FROM users WHERE token = ?;", (token,))
 	elif (id == 0x01): # register
 		login = get_fixed_len_string(conn, 20)
 		password = get_var_len_string(conn)
