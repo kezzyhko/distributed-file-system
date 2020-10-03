@@ -13,8 +13,8 @@ from secrets import token_bytes, token_hex
 # HELPER FUNCTIONS
 
 def log(string):
-	print(getpid(), '|', string)
-	stdout.flush();
+	print("%06d | %s" % (getpid(), string))
+	stdout.flush()
 
 
 
