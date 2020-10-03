@@ -1,7 +1,6 @@
 from socket import socket
-from multiprocessing import Process
+from threading import Thread, get_ident
 from sys import stdout
-from os import getpid
 import sqlite3
 from hashlib import pbkdf2_hmac as password_hash
 from secrets import token_bytes, token_hex
@@ -18,7 +17,11 @@ DATABASE = 'database.db'
 
 # INITIAL DATABASE CONFIGURATION
 
-db_conn = sqlite3.connect(DATABASE, isolation_level=None) # autocommits = on
+db_conn = sqlite3.connect(
+	DATABASE,
+	isolation_level = None, # enable autocommits
+	check_same_thread = False
+) 
 db_cursor = db_conn.cursor()
 
 db_cursor.execute('''
@@ -43,7 +46,7 @@ db_cursor.execute('''
 # HELPER FUNCTIONS
 
 def log(string):
-	print("%06d | %s" % (getpid(), string))
+	print("%06d | %s" % (get_ident(), string))
 	stdout.flush()
 
 def get_function_by_addr(addr):
@@ -241,19 +244,18 @@ def handle_storage_server(conn, addr):
 
 # START ACCEPTING CONNECTIONS
 
-if __name__ == '__main__':
-	s = socket()
-	s.bind(('', PORT))
-	s.listen()
+s = socket()
+s.bind(('', PORT))
+s.listen()
 
-	log('Server started!')
-	log('Waiting for connections...')
+log('Server started!')
+log('Waiting for connections...')
 
-	while True:
-		conn, addr = s.accept()
-		p = Process(target = get_function_by_addr(addr), args = (conn, addr))
-		p.start()
-		#p.join()
-		pass
+while True:
+	conn, addr = s.accept()
+	p = Thread(target = get_function_by_addr(addr), args = (conn, addr))
+	p.start()
+	#p.join()
+	pass
 
-	s.close()
+s.close()
