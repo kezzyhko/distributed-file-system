@@ -69,6 +69,16 @@ def get_fixed_len_string(conn, len):
 def get_var_len_string(conn, length_of_lenght = 1):
 	return get_fixed_len_string(conn, get_int(conn, length_of_lenght))
 
+def get_login(conn):
+	token = get_data(conn, 32)
+	db_cursor.execute("SELECT login FROM tokens WHERE token = ?", (token,))
+	row = db_cursor.fetchone();
+	if row == None:
+		return_status(conn, 0x15)
+		return None
+	else:
+		return row[0];
+
 
 
 # SENDING DATA FUNCTIONS
@@ -100,6 +110,7 @@ def handle_client(conn, addr):
 	elif (id == 0x00): # logout
 		token = get_data(conn, 32)
 		db_cursor.execute("DELETE FROM users WHERE token = ?;", (token,))
+		return_status(conn, 0x00)
 	elif (id == 0x01): # register
 		login = get_fixed_len_string(conn, 20)
 		password = get_var_len_string(conn)
@@ -133,39 +144,39 @@ def handle_client(conn, addr):
 				return_token(conn, login)
 
 	elif (id == 0x03): # initialize
-		token = get_data(conn, 32)
+		login = get_login(conn)
 
 	elif (id == 0x04): # file create
-		token = get_data(conn, 32)
+		login = get_login(conn)
 		filename = get_var_len_string(conn)
 
 	elif (id == 0x05): # file read
-		token = get_data(conn, 32)
+		login = get_login(conn)
 		filename = get_var_len_string(conn)
 
 	elif (id == 0x06): # file write
-		token = get_data(conn, 32)
+		login = get_login(conn)
 		filename_len = get_int(conn)
 		size = get_int(conn, 4)
 		filename = get_fixed_len_string(conn, filename_len)
 
 	elif (id == 0x07): # file delete
-		token = get_data(conn, 32)
+		login = get_login(conn)
 		filename = get_var_len_string(conn)
 
 	elif (id == 0x08): # file info
-		token = get_data(conn, 32)
+		login = get_login(conn)
 		filename = get_var_len_string(conn)
 
 	elif (id == 0x09): # file copy
-		token = get_data(conn, 32)
+		login = get_login(conn)
 		source_len = get_int(conn)
 		destination_len = get_int(conn)
 		source = get_fixed_len_string(conn, source_len)
 		destination = get_fixed_len_string(conn, destination_len)
 
 	elif (id == 0x0A): # file move
-		token = get_data(conn, 32)
+		login = get_login(conn)
 		source_len = get_int(conn)
 		destination_len = get_int(conn)
 		source = get_fixed_len_string(conn, source_len)
@@ -175,15 +186,15 @@ def handle_client(conn, addr):
 		pass # TODO: error
 
 	elif (id == 0x0C): # directory read
-		token = get_data(conn, 32)
+		login = get_login(conn)
 		dir = get_var_len_string(conn)
 
 	elif (id == 0x0C): # directory make
-		token = get_data(conn, 32)
+		login = get_login(conn)
 		dir = get_var_len_string(conn)
 
 	elif (id == 0x0C): # directory delete
-		token = get_data(conn, 32)
+		login = get_login(conn)
 		dir = get_var_len_string(conn)
 
 	else: # unknown id
