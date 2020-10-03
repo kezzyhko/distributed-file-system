@@ -1,15 +1,8 @@
 from socket import socket
 from multiprocessing import Process
-from sys import stdout
-from os import chdir, getpid
-import sqlite3
-import string
-import random
-from hashlib import pbkdf2_hmac as password_hash
-from secrets import token_bytes, token_hex
+from os import system
 
 # Parse config
-
 def parse_config(filemae = 'config'):
 
 	result = dict()
@@ -26,6 +19,8 @@ PORT = int(_d['PORT'])
 MASTER_IP = _d['MASTER_IP']
 MASTER_PORT = _d['MASTER_PORT']
 
+
+
 # HELPER FUNCTIONS
 def log(string):
 	print("%06d | %s" % (getpid(), string))
@@ -41,7 +36,6 @@ def int_to_bytes(n):
 
 
 # RECEIVING DATA FUNCTIONS
-
 def get_data(conn, len):
 	return conn.recv(len)
 
@@ -71,108 +65,53 @@ def send_i_was_born():
 		exit(0)
 	conn.close()
 
-def return_token(conn, login):
-	token = token_bytes(32)
-	db_cursor.execute("INSERT INTO tokens (login, token) VALUES (?, ?);", (login, sqlite3.Binary(token)))
-	conn.send(b'\x00')
-	conn.send(token)
+def send_report(conn, operation, entity, string):
+	conn.send(b'\x01')
+	conn.send(b'\x00' if operation == 'deleted' else '\x01')
+	conn.send(b'\x00' if entity == 'file' else '\x01')
+	conn.send(int_to_bytes(len(string)))
+	conn.send(string.encode('utf-8'))
 	conn.close()
 
+def send_response(conn, status_code):
+	conn.send(int_to_bytes(status_code))
+	conn.close()
 
 
 # MAIN FUNCTION
 
-def handle_client(conn, addr):
-	log('Got connection from {}'.format(addr))
-	id = get_int(conn);
+def handle_ns_request(conn):
+	log('Got connection from Name Server')
+	id = get_int(conn)
 
 	if False: # for alligning conditions below
 		pass
-	elif (id == 0x01): # register
-		login = get_fixed_len_string(conn, 20)
-		password = get_var_len_string(conn)
-		if (not login.isalnum()):
-			return_error(conn, 0x12) # Invalid username during registration
-		else:
-			db_cursor.execute("SELECT login FROM users WHERE login = ?", (login,))
-			if db_cursor.fetchone():
-				return_error(conn, 0x11) # Username already registered
-			else:
-				# creating user
-				salt = token_bytes(5)
-				hashed_password = password_hash('sha256', password.encode('utf-8'), salt, 100000)
-				db_cursor.execute("INSERT INTO users (login, password, salt) VALUES (?, ?, ?);", (login, sqlite3.Binary(hashed_password), sqlite3.Binary(salt)))
-				return_token(conn, login)
+	elif (id == 0x00): # Give the file to user 
+		token = get_data(conn, 16)
+		file_path = str(get_data(conn, get_int(conn)))
 
-	elif (id == 0x02): # login
-		login = get_fixed_len_string(conn, 20)
-		password = get_var_len_string(conn)
+		log("Got 'give file' request from Name server: " + hex(token)[2::] + ", " + file_path)
 
-		db_cursor.execute("SELECT password, salt FROM users WHERE login = ?;", (login,))
-		row = db_cursor.fetchone()
-		if not row:
-			return_error(conn, 0x13) # No such user
-		else:
-			hashed_password_from_db, salt = row
-			hashed_password = password_hash('sha256', password.encode('utf-8'), salt, 100000)
-			if (hashed_password != hashed_password_from_db):
-				return_error(conn, 0x14)
-			else:
-				return_token(conn, login)
+	elif (id == 0x01): # Get the file from user
+		token = get_data(conn, 16)
+		file_size = get_int(4)
+		file_path = get_data(conn, get_int(conn))
 
-	elif (id == 0x03): # initialize
-		token = get_data(conn, 32)
+		log("Got 'get file' request from Name server: " + hex(token)[2::] + ", " + file_path + ", " str(file_size))
 
-	elif (id == 0x04): # file create
-		token = get_data(conn, 32)
-		filename = get_var_len_string(conn)
+	elif (id == 0x02): # Get the file from server
+		token = get_data(conn, 16)
+		server_ip = get_int(4)
+		file_path = get_data(conn, get_int(conn))
 
-	elif (id == 0x05): # file read
-		token = get_data(conn, 32)
-		filename = get_var_len_string(conn)
+		log("Got 'get server file' request from Name server: " + hex(token)[2::] + ", " + file_path + ", " str(server_ip))
 
-	elif (id == 0x06): # file write
-		token = get_data(conn, 32)
-		filename_len = get_int(conn)
-		size = get_int(conn, 4)
-		filename = get_fixed_len_string(conn, filename_len)
+	elif (id == 0x03): # Eval of the given command
+		command = str(get_data(conn, get_int(conn)))
 
-	elif (id == 0x07): # file delete
-		token = get_data(conn, 32)
-		filename = get_var_len_string(conn)
-
-	elif (id == 0x08): # file info
-		token = get_data(conn, 32)
-		filename = get_var_len_string(conn)
-
-	elif (id == 0x09): # file copy
-		token = get_data(conn, 32)
-		source_len = get_int(conn)
-		destination_len = get_int(conn)
-		source = get_fixed_len_string(conn, source_len)
-		destination = get_fixed_len_string(conn, destination_len)
-
-	elif (id == 0x0A): # file move
-		token = get_data(conn, 32)
-		source_len = get_int(conn)
-		destination_len = get_int(conn)
-		source = get_fixed_len_string(conn, source_len)
-		destination = get_fixed_len_string(conn, destination_len)
-
-	elif (id == 0x0B): # open dir, deprecated
-		pass # TODO: error
-
-	elif (id == 0x0C): # directory read
-		token = get_data(conn, 32)
-		dir = get_var_len_string(conn)
-
-	elif (id == 0x0C): # directory make
-		token = get_data(conn, 32)
-		dir = get_var_len_string(conn)
-
-	elif (id == 0x0C): # directory delete
-		token = get_data(conn, 32)
-		dir = get_var_len_string(conn)
+		log("Got command from Name server: " + command)
+		res = os.system(str(command))
+		log("Result: " + command)
 
 	else: # unknown id
 		pass # TODO: return error
