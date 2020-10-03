@@ -6,37 +6,43 @@ import sqlite3
 import string
 import random
 import hashlib
-from secrets import token_bytes
+from secrets import token_bytes, token_hex
 
 
 
 # CONSTANTS
 
-PORT = 222
+PORT = 1234
 ROOT_FOLDER = '.'
 DATABASE = 'database.db'
-TOKEN_KEY = token_bytes(16)
-TOKEN_SALT = token_bytes(8)
 
 
 
-# INITIAL CONFIGURATION
+# INITIAL DATABASE CONFIGURATION
 
-chdir(ROOT_FOLDER)
+db_conn = sqlite3.connect(DATABASE)
+db_cursor = db_conn.cursor()
 
-db = sqlite3.connect(DATABASE).cursor()
-db.execute('''
+db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
        login        VARCHAR(20) UNIQUE                NOT NULL,
-       password     TEXT,
-       salt         VARCHAR(5)
+       password     BLOB(16),
+       salt         BLOB(5)
+    );
+''')
+
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS tokens (
+       id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+       login        VARCHAR(20) UNIQUE                NOT NULL,
+       token        BLOB(32)    UNIQUE                NOT NULL
     );
 ''')
 
 
 
-# RECEIVING/SENDING DATA FUNCTIONS
+# RECEIVING DATA FUNCTIONS
 
 def get_data(conn, len):
 	return conn.recv(len)
@@ -44,21 +50,28 @@ def get_data(conn, len):
 def get_int(conn, len=1):
 	data = get_data(conn, len)
 	result = 0
-	print(data)
 	for byte in data:
-		print(byte)
 		result << 8
 		result += byte
 	return result
 
 def get_fixed_len_string(conn, len):
-	return get_data(conn, len).decode('ascii')
+	return get_data(conn, len).decode('ascii').rstrip('\x00')
 
 def get_var_len_string(conn, length_of_lenght = 1):
 	return get_fixed_len_string(conn, get_int(conn, length_of_lenght))
 
+
+
+# SENDING DATA FUNCTIONS
+
 def return_error(conn, error_code):
 	conn.send(bytes([error_code]))
+	conn.close()
+
+def return_token(conn, token):
+	conn.send(b'\x00')
+	conn.send(token)
 	conn.close()
 
 
@@ -73,6 +86,23 @@ def handle_client(conn, addr):
 	elif (id == 0x01): # register
 		login = get_fixed_len_string(conn, 20)
 		password = get_var_len_string(conn)
+		if (not login.isalnum()):
+			return_error(conn, 0x12) # Invalid username during registration
+		else:
+			db_cursor.execute("SELECT login FROM users WHERE login = ?", (login,))
+			if db_cursor.fetchone():
+				return_error(conn, 0x11) # Username already registered
+			else:
+				# creating user
+				salt = token_bytes(5)
+				hashed_password = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+				db_cursor.execute("INSERT INTO users (login, password, salt) VALUES (?, ?, ?);", (login, sqlite3.Binary(hashed_password), sqlite3.Binary(salt)))
+				db_conn.commit()
+				# create token
+				token = token_bytes(32)
+				db_cursor.execute("INSERT INTO tokens (login, token) VALUES (?, ?);", (login, sqlite3.Binary(token)))
+				db_conn.commit()
+				return_token(conn, token)
 
 	elif (id == 0x02): # login
 		login = get_fixed_len_string(conn, 20)
