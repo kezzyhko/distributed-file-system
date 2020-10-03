@@ -73,9 +73,11 @@ def get_var_len_string(conn, length_of_lenght = 1):
 
 # SENDING DATA FUNCTIONS
 
-def return_error(conn, error_code):
-	log('Error %02x' % error_code)
-	conn.send(bytes([error_code]))
+def return_status(conn, code, message=''):
+	log('Returned %02x %s' % (code, message))
+	l = len(message)
+	conn.send(bytes([code, l//256, l%256]))
+	conn.send(message.encode('utf-8'))
 	conn.close()
 
 def return_token(conn, login):
@@ -102,11 +104,11 @@ def handle_client(conn, addr):
 		login = get_fixed_len_string(conn, 20)
 		password = get_var_len_string(conn)
 		if (not login.isalnum()):
-			return_error(conn, 0x12) # Invalid username during registration
+			return_status(conn, 0x12) # Invalid username during registration
 		else:
 			db_cursor.execute("SELECT login FROM users WHERE login = ?", (login,))
 			if db_cursor.fetchone():
-				return_error(conn, 0x11) # Username already registered
+				return_status(conn, 0x11) # Username already registered
 			else:
 				# creating user
 				salt = token_bytes(5)
@@ -121,12 +123,12 @@ def handle_client(conn, addr):
 		db_cursor.execute("SELECT password, salt FROM users WHERE login = ?;", (login,))
 		row = db_cursor.fetchone()
 		if not row:
-			return_error(conn, 0x13) # No such user
+			return_status(conn, 0x13) # No such user
 		else:
 			hashed_password_from_db, salt = row
 			hashed_password = password_hash('sha256', password.encode('utf-8'), salt, 100000)
 			if (hashed_password != hashed_password_from_db):
-				return_error(conn, 0x14)
+				return_status(conn, 0x14)
 			else:
 				return_token(conn, login)
 
