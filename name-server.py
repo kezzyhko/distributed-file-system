@@ -28,7 +28,7 @@ DATABASE = 'database.db'
 
 # INITIAL DATABASE CONFIGURATION
 
-db_conn = sqlite3.connect(DATABASE)
+db_conn = sqlite3.connect(DATABASE, isolation_level=None) # autocommits = on
 db_cursor = db_conn.cursor()
 
 db_cursor.execute('''
@@ -107,11 +107,9 @@ def handle_client(conn, addr):
 				salt = token_bytes(5)
 				hashed_password = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
 				db_cursor.execute("INSERT INTO users (login, password, salt) VALUES (?, ?, ?);", (login, sqlite3.Binary(hashed_password), sqlite3.Binary(salt)))
-				db_conn.commit()
 				# create token
 				token = token_bytes(32)
 				db_cursor.execute("INSERT INTO tokens (login, token) VALUES (?, ?);", (login, sqlite3.Binary(token)))
-				db_conn.commit()
 				return_token(conn, token)
 
 	elif (id == 0x02): # login
