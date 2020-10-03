@@ -10,14 +10,6 @@ from secrets import token_bytes, token_hex
 
 
 
-# HELPER FUNCTIONS
-
-def log(string):
-	print("%06d | %s" % (getpid(), string))
-	stdout.flush()
-
-
-
 # CONSTANTS
 
 PORT = 1234
@@ -47,6 +39,20 @@ db_cursor.execute('''
        token        BLOB(32)    UNIQUE                NOT NULL
     );
 ''')
+
+
+
+# HELPER FUNCTIONS
+
+def log(string):
+	print("%06d | %s" % (getpid(), string))
+	stdout.flush()
+
+def get_function_by_addr(addr):
+	if addr[0] == '25.108.175.17':
+		return handle_storage_server
+	else:
+		return handle_client
 
 
 
@@ -97,20 +103,26 @@ def return_token(conn, login):
 	conn.send(token)
 	conn.close()
 
+def storage_server_response(conn, code):
+	conn.send(bytes([code]))
+	conn.close()
 
 
-# MAIN FUNCTION
+
+# HANDLE CLIENT
 
 def handle_client(conn, addr):
-	log('Got connection from {}'.format(addr))
+	log('Got connection from client {}'.format(addr))
 	id = get_int(conn);
 
 	if False: # for alligning conditions below
 		pass
+
 	elif (id == 0x00): # logout
 		token = get_data(conn, 32)
 		db_cursor.execute("DELETE FROM tokens WHERE token = ?;", (token,))
 		return_status(conn, 0x00)
+
 	elif (id == 0x01): # register
 		login = get_fixed_len_string(conn, 20)
 		password = get_var_len_string(conn)
@@ -204,6 +216,32 @@ def handle_client(conn, addr):
 
 
 
+# HANDLE STORAGE SERVER
+
+def handle_storage_server(conn, addr):
+	log('Got connection from storage server {}'.format(addr))
+	id = get_int(conn);
+
+	if False: # for alligning conditions below
+		pass
+
+	elif (id == 0x00): # new storage server
+		port = get_int(conn, 2)
+		# TODO: add to some list
+		storage_server_response(conn, 0x00)
+
+	elif (id == 0x01): # report
+		operation = get_int(conn)
+		entity_type = get_int(conn)
+		name = get_var_len_string(conn)
+		# TODO: change in the database
+		storage_server_response(conn, 0x00)
+
+	else: # unknown id
+		pass # TODO: return error
+
+
+
 # START ACCEPTING CONNECTIONS
 
 if __name__ == '__main__':
@@ -216,7 +254,7 @@ if __name__ == '__main__':
 
 	while True:
 		conn, addr = s.accept()	 # Establish connection with client.
-		p = Process(target = handle_client, args = (conn, addr))
+		p = Process(target = get_function_by_addr(addr), args = (conn, addr))
 		p.start()
 		#p.join()
 		pass
