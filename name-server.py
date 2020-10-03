@@ -91,13 +91,14 @@ def get_login(conn):
 # SENDING DATA FUNCTIONS
 
 def return_status(conn, code, message=''):
-	log('Returned %02x %s' % (code, message))
+	log('Returned status code %02x with message "%s"' % (code, message))
 	l = len(message)
 	conn.send(bytes([code, l//256, l%256]))
 	conn.send(message.encode('utf-8'))
 	conn.close()
 
 def return_token(conn, login):
+	log('Successfull login/registration as "%s"' % login)
 	token = token_bytes(32)
 	db_cursor.execute("INSERT INTO tokens (login, token) VALUES (?, ?);", (login, sqlite3.Binary(token)))
 	conn.send(b'\x00')
@@ -105,6 +106,7 @@ def return_token(conn, login):
 	conn.close()
 
 def storage_server_response(conn, code):
+	log('Returned status code %02x' % code)
 	conn.send(bytes([code]))
 	conn.close()
 
@@ -213,6 +215,7 @@ def handle_client(conn, addr):
 	else: # unknown id
 		pass # TODO: return error
 
+	log('Thread end')
 
 
 
@@ -239,6 +242,8 @@ def handle_storage_server(conn, addr):
 
 	else: # unknown id
 		pass # TODO: return error
+
+	log('Thread end')
 
 
 
