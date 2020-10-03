@@ -109,7 +109,7 @@ def handle_client(conn, addr):
 		pass
 	elif (id == 0x00): # logout
 		token = get_data(conn, 32)
-		db_cursor.execute("DELETE FROM users WHERE token = ?;", (token,))
+		db_cursor.execute("DELETE FROM tokens WHERE token = ?;", (token,))
 		return_status(conn, 0x00)
 	elif (id == 0x01): # register
 		login = get_fixed_len_string(conn, 20)
