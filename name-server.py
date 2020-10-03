@@ -64,7 +64,7 @@ def get_int(conn, len=1):
 	return result
 
 def get_fixed_len_string(conn, len):
-	return get_data(conn, len).decode('ascii').rstrip('\x00')
+	return get_data(conn, len).decode('utf-8').rstrip('\x00')
 
 def get_var_len_string(conn, length_of_lenght = 1):
 	return get_fixed_len_string(conn, get_int(conn, length_of_lenght))
