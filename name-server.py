@@ -1,12 +1,20 @@
 from socket import socket
 from multiprocessing import Process
 from sys import stdout
-from os import chdir
+from os import chdir, getpid
 import sqlite3
 import string
 import random
 import hashlib
 from secrets import token_bytes, token_hex
+
+
+
+# HELPER FUNCTIONS
+
+def log(string):
+	print(getpid(), '|', string)
+	stdout.flush();
 
 
 
@@ -66,6 +74,7 @@ def get_var_len_string(conn, length_of_lenght = 1):
 # SENDING DATA FUNCTIONS
 
 def return_error(conn, error_code):
+	log('Error %02x' % error_code)
 	conn.send(bytes([error_code]))
 	conn.close()
 
@@ -79,6 +88,7 @@ def return_token(conn, token):
 # MAIN FUNCTION
 
 def handle_client(conn, addr):
+	log('Got connection from {}'.format(addr))
 	id = get_int(conn);
 
 	if False: # for alligning conditions below
@@ -176,12 +186,11 @@ if __name__ == '__main__':
 	s.bind(('', PORT))
 	s.listen()
 
-	print('Server started!')
-	print('Waiting for clients...')
+	log('Server started!')
+	log('Waiting for clients...')
 
 	while True:
 		conn, addr = s.accept()	 # Establish connection with client.
-		print('Got connection from', addr)
 		p = Process(target = handle_client, args = (conn, addr))
 		p.start()
 		#p.join()
