@@ -12,7 +12,7 @@ from time import sleep
 # CONSTANTS
 
 PORT = 1234
-ROOT_FOLDER = '.'
+ROOT_FOLDER = '/files/'
 DATABASE = 'database.db'
 PING_DELAY = 60
 PING_TIMEOUT = 5
@@ -73,6 +73,9 @@ def foreach_storage_server(func, additional_params=(), delays=False):
 
 	return errors
 
+def get_folder(login, path='/'):
+	return '%s%s%s' % (ROOT_FOLDER, login, path)
+
 
 
 # RECEIVING DATA FUNCTIONS
@@ -106,7 +109,7 @@ def get_login(conn):
 
 
 
-# SENDING DATA FUNCTIONS
+# CLIEN RESPONSE FUNCTIONS
 
 def return_status(conn, code, message=''):
 	log('Returned status code %02x with message "%s"' % (code, message))
@@ -128,6 +131,10 @@ def storage_server_response(conn, code):
 	conn.send(bytes([code]))
 	conn.close()
 
+
+
+# STORAGE SERVER QUERIES
+
 def server_send(server, data):
 	try:
 		conn = socket()
@@ -142,9 +149,24 @@ def server_send(server, data):
 	finally:
 		conn.close()
 
+def server_eval(server, cmd):
+	return server_send(server, [b'\x03', bytes([len(cmd)]), cmd.encode('utf-8')])
+
 def server_ping(server, _):
 	log('Send ping to {}'.format(server))
 	return server_send(server, [b'\x04'])
+
+def server_create_dir(server, login):
+	return server_eval(server, "os.makedirs('%s')" % get_folder(login))
+
+def server_remove_dir(server, login):
+	return server_eval(server, "rmtree('%s')" % get_folder(login))
+
+def server_initialize(server, login):
+	res1 = server_remove_dir(server, login)
+	if not res1: return False
+	res2 = server_create_dir(server, login)
+	return res2
 
 
 
@@ -176,6 +198,7 @@ def handle_client(conn, addr):
 				salt = token_bytes(5)
 				hashed_password = password_hash('sha256', password.encode('utf-8'), salt, 100000)
 				db_cursor.execute("INSERT INTO users (login, password, salt) VALUES (?, ?, ?);", (login, sqlite3.Binary(hashed_password), sqlite3.Binary(salt)))
+				foreach_storage_server(server_initialize, login)
 				return_token(conn, login)
 
 	elif (id == 0x02): # login
@@ -196,6 +219,7 @@ def handle_client(conn, addr):
 
 	elif (id == 0x03): # initialize
 		login = get_login(conn)
+		foreach_storage_server(server_initialize, login)
 
 	elif (id == 0x04): # file create
 		login = get_login(conn)
@@ -240,13 +264,15 @@ def handle_client(conn, addr):
 		login = get_login(conn)
 		dirname = get_var_len_string(conn)
 
-	elif (id == 0x0C): # directory make
+	elif (id == 0x0D): # directory make
 		login = get_login(conn)
 		dirname = get_var_len_string(conn)
+		foreach_storage_server(server_create_dir, login)
 
-	elif (id == 0x0C): # directory delete
+	elif (id == 0x0E): # directory delete
 		login = get_login(conn)
 		dirname = get_var_len_string(conn)
+		foreach_storage_server(server_remove_dir, login)
 
 	else: # unknown id
 		pass # TODO: return error
