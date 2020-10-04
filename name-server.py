@@ -84,8 +84,8 @@ def get_int(conn, len=1):
 	data = get_data(conn, len)
 	result = 0
 	for byte in data:
-		result << 8
-		result += byte
+		result <<= 8
+		result |= byte
 	return result
 
 def get_fixed_len_string(conn, len):
@@ -238,15 +238,15 @@ def handle_client(conn, addr):
 
 	elif (id == 0x0C): # directory read
 		login = get_login(conn)
-		dir = get_var_len_string(conn)
+		dirname = get_var_len_string(conn)
 
 	elif (id == 0x0C): # directory make
 		login = get_login(conn)
-		dir = get_var_len_string(conn)
+		dirname = get_var_len_string(conn)
 
 	elif (id == 0x0C): # directory delete
 		login = get_login(conn)
-		dir = get_var_len_string(conn)
+		dirname = get_var_len_string(conn)
 
 	else: # unknown id
 		pass # TODO: return error
