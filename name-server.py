@@ -1,9 +1,11 @@
-from socket import socket
+from socket import socket, timeout as socket_error
 from threading import Thread, get_ident
 from sys import stdout
+from os import system
 import sqlite3
 from hashlib import pbkdf2_hmac as password_hash
 from secrets import token_bytes, token_hex
+from time import sleep
 
 
 
@@ -12,6 +14,8 @@ from secrets import token_bytes, token_hex
 PORT = 1234
 ROOT_FOLDER = '.'
 DATABASE = 'database.db'
+PING_DELAY = 60
+PING_TIMEOUT = 5
 
 
 
@@ -54,6 +58,20 @@ def get_function_by_addr(addr):
 		return handle_storage_server
 	else:
 		return handle_client
+
+def foreach_storage_server(func, additional_params=(), delays=False):
+	storage_servers_list_copy = storage_servers_list.copy()
+	errors = set()
+
+	for server in storage_servers_list_copy:
+		res = func(server, additional_params)
+		if not res:
+			storage_servers_list.remove(server)
+			errors.add(server)
+			if delays: sleep(PING_DELAY / len(storage_servers_list_copy))
+	if delays: sleep(PING_DELAY / len(storage_servers_list_copy))
+
+	return errors
 
 
 
@@ -109,6 +127,24 @@ def storage_server_response(conn, code):
 	log('Returned status code %02x' % code)
 	conn.send(bytes([code]))
 	conn.close()
+
+def server_send(server, data):
+	try:
+		conn = socket()
+		conn.settimeout(PING_TIMEOUT)
+		conn.connect(server)
+		for d in data:
+			conn.send(d)
+		return (get_int(conn) == 0)
+	except socket_error as e: 
+		log('Could not connect to {}'.format(server))
+		return False
+	finally:
+		conn.close()
+
+def server_ping(server, _):
+	log('Send ping to {}'.format(server))
+	return server_send(server, [b'\x04'])
 
 
 
@@ -221,6 +257,8 @@ def handle_client(conn, addr):
 
 # HANDLE STORAGE SERVER
 
+storage_servers_list = set()
+
 def handle_storage_server(conn, addr):
 	log('Got connection from storage server {}'.format(addr))
 	id = get_int(conn)
@@ -230,7 +268,8 @@ def handle_storage_server(conn, addr):
 
 	elif (id == 0x00): # new storage server
 		port = get_int(conn, 2)
-		# TODO: add to some list
+		storage_servers_list.add((addr[0], port))
+		# TODO: tell full folder structure to storage server
 		storage_server_response(conn, 0x00)
 
 	elif (id == 0x01): # report
@@ -247,6 +286,25 @@ def handle_storage_server(conn, addr):
 
 
 
+# CHECK AVAILABILITY OF STORAGE SERVERS
+
+def ping_storage_servers():
+	while True:
+		if len(storage_servers_list) == 0:
+			sleep(PING_DELAY)
+		else:
+			dead_servers = foreach_storage_server(
+				server_ping, 
+				delays = True
+			)
+			# TODO: check dead servers, reupload files
+
+ping_thread = Thread(target = ping_storage_servers)
+ping_thread.start()
+#ping_thread.join()
+
+
+
 # START ACCEPTING CONNECTIONS
 
 s = socket()
@@ -258,9 +316,8 @@ log('Waiting for connections...')
 
 while True:
 	conn, addr = s.accept()
-	p = Thread(target = get_function_by_addr(addr), args = (conn, addr))
-	p.start()
-	#p.join()
-	pass
+	user_thread = Thread(target = get_function_by_addr(addr), args = (conn, addr))
+	user_thread.start()
+	#user_thread.join()
 
 s.close()
