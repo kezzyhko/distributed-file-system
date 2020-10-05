@@ -211,19 +211,19 @@ def server_initialize(server, login):
 
 # HANDLE CLIENT
 
-def initialize(conn, login, return_token = False):
+def initialize(conn, login, response_token = False):
 	db_cursor.execute("DELETE FROM files   WHERE login = ?;", (login,))
 	db_cursor.execute("DELETE FROM folders WHERE login = ?;", (login,))
 	db_cursor.execute("INSERT INTO folders (login, path) VALUES (?, ?);", (login, '/'))
 	if db_cursor.rowcount == 1:
 		db_conn.commit()
 		foreach_storage_server(server_initialize, login)
-		if return_token:
+		if response_token:
 			return_token(conn, login)
 		else:
 			return_status(conn, 0x00)
 	else:
-		return_status(conn, 0x20)
+		return_status(conn, 0x30)
 
 def handle_client(conn, addr):
 	log('Got connection from client {}'.format(addr))
@@ -258,7 +258,7 @@ def handle_client(conn, addr):
 				db_cursor.execute("INSERT INTO users (login, password, salt) VALUES (?, ?, ?);", (login, sqlite3.Binary(hashed_password), sqlite3.Binary(salt)))
 				if db_cursor.rowcount == 1:
 					db_conn.commit()
-					initialize(conn, login, return_token=True)
+					initialize(conn, login, response_token=True)
 				else:
 					return_status(conn, 0x10)
 
