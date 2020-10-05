@@ -314,7 +314,7 @@ def handle_client(conn, addr):
 		if row != None:
 			return_status(conn, 0x32 if row[0] == None else 0x22) # Directory/File already exists
 		else:
-			db_cursor.execute("SELECT path FROM file_structure WHERE size = NULL AND login = ? AND path = ?;", (login, folder))
+			db_cursor.execute("SELECT path FROM file_structure WHERE size IS NULL AND login = ? AND path = ?;", (login, folder))
 			if db_cursor.fetchone() != None:
 				return_status(conn, 0x31) # Directory does not exist
 			elif not is_valid_filename(filename):
@@ -381,7 +381,7 @@ def handle_client(conn, addr):
 		login = get_login(conn)
 		filepath = get_var_len_string(conn)
 
-		db_cursor.execute("SELECT size FROM file_structure WHERE size != NULL AND login = ? AND path = ?;", (login, filepath))
+		db_cursor.execute("SELECT size FROM file_structure WHERE size IS NOT NULL AND login = ? AND path = ?;", (login, filepath))
 		if row == None:
 			return_status(conn, 0x21) # File does not exist
 		else:
