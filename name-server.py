@@ -295,12 +295,13 @@ def handle_client(conn, addr):
 		login = get_login(conn)
 		initialize(conn, login)
 
-	elif (id == 0x04): # file create
+	elif (id == 0x04 or id == 0x0D): # file/directory create
 		login = get_login(conn)
-		filepath = get_var_len_string(conn)
-		folder, _, filename = filepath.rpartition('/')
+		path = get_var_len_string(conn)
+		folder, _, filename = path.rpartition('/')
+		creating_dir = (id == 0x0D)
 
-		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ?;", (login, filepath))
+		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ?;", (login, path))
 		row = db_cursor.fetchone()
 		if row != None:
 			return_status(conn, 0x32 if row[0] == None else 0x22) # Directory/File already exists
@@ -309,17 +310,19 @@ def handle_client(conn, addr):
 			if db_cursor.fetchone() != None:
 				return_status(conn, 0x31) # Directory does not exist
 			elif not is_valid_filename(filename):
-				return_status(conn, 0x24) # Prohibited filename
+				return_status(conn, 0x33 if creating_dir else 0x24) # Prohibited directory/file name
 			else:
-				# creating file
-				db_cursor.execute("INSERT INTO file_structure (login, path, size) VALUES (?, ?, 0);", (login, filename))
+				# finally, creating file/directory
+				db_cursor.execute("INSERT INTO file_structure (login, path, size) VALUES (?, ?, ?);", (login, path, None if creating_dir else 0))
 				if db_cursor.rowcount == 1:
 					db_conn.commit()
-					# foreach_storage_server(server_initialize, login)
-					# TODO!!! Create file on some servers
+					if creating_dir:
+						foreach_storage_server(server_create_dir, login)
+					else:
+						pass # TODO!!! Create file on some servers
 					return_status(conn, 0x00)
 				else:
-					return_status(conn, 0x20)
+					return_status(conn, 0x30 if creating_dir else 0x20) # Unknown directory/file error
 
 	elif (id == 0x05): # file read
 		login = get_login(conn)
@@ -365,10 +368,7 @@ def handle_client(conn, addr):
 		login = get_login(conn)
 		dirname = get_var_len_string(conn)
 
-	elif (id == 0x0D): # directory make
-		login = get_login(conn)
-		dirname = get_var_len_string(conn)
-		foreach_storage_server(server_create_dir, login)
+	#     id == 0x0D   # look above
 
 	elif (id == 0x0E): # directory delete
 		login = get_login(conn)
