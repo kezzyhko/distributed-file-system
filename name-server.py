@@ -6,6 +6,7 @@ import sqlite3
 from hashlib import pbkdf2_hmac as password_hash
 from secrets import token_bytes, token_hex
 from time import sleep
+from ipaddress import ip_address
 
 
 
@@ -95,7 +96,7 @@ def foreach_storage_server(func, additional_params=(), delays=False):
 	errors = set()
 
 	for server in storage_servers_list_copy:
-		res = func(server, additional_params)
+		res = func(server, *additional_params)
 		if not res:
 			storage_servers_list.remove(server)
 			errors.add(server)
@@ -104,8 +105,11 @@ def foreach_storage_server(func, additional_params=(), delays=False):
 
 	return errors
 
-def get_folder(login, path='/'):
-	return '%s%s%s' % (ROOT_FOLDER, login, path)
+def get_folder(login, path=''):
+	if path == '':
+		return '%s%s' % (ROOT_FOLDER, login)
+	else:
+		return '%s%s/%s' % (ROOT_FOLDER, login, path)
 
 def is_valid_filename(string):
 	# check special conditions
@@ -209,15 +213,19 @@ def server_ping(server, _):
 	log('Send ping to {}'.format(server))
 	return server_send(server, [b'\x04'])
 
-def server_create_dir(server, login):
-	return server_eval(server, "os.makedirs('%s')" % get_folder(login))
+def server_create_dir(server, login, path=''):
+	return server_eval(server, "os.makedirs('%s')" % get_folder(login, path))
 
-def server_remove_dir(server, login):
-	return server_eval(server, "rmtree('%s')" % get_folder(login))
+def server_remove_dir(server, login, path=''):
+	return server_eval(server, "rmtree('%s')" % get_folder(login, path))
 
-def server_initialize(server, login):
-	res1 = server_remove_dir(server, login)
-	if not res1: return False
+def server_create_file(server, login, path):
+	return server_eval(server, "open('%s', 'a').close()" % get_folder(login, path))
+
+def server_initialize(server, login, new_user=False):
+	if not new_user:
+		res1 = server_remove_dir(server, login)
+		if not res1: return False
 	res2 = server_create_dir(server, login)
 	return res2
 
@@ -225,13 +233,13 @@ def server_initialize(server, login):
 
 # HANDLE CLIENT
 
-def initialize(conn, login, response_token = False):
+def initialize(conn, login, new_user=False):
 	db_cursor.execute("DELETE FROM file_structure WHERE login = ?;", (login,))
 	db_cursor.execute("INSERT INTO file_structure (login, path) VALUES (?, ?);", (login, '/'))
 	if db_cursor.rowcount == 1:
 		db_conn.commit()
-		foreach_storage_server(server_initialize, login)
-		if response_token:
+		foreach_storage_server(server_initialize, (login, new_user))
+		if new_user:
 			return_token(conn, login)
 		else:
 			return_status(conn, 0x00)
@@ -271,7 +279,7 @@ def handle_client(conn, addr):
 				db_cursor.execute("INSERT INTO users (login, password, salt) VALUES (?, ?, ?);", (login, sqlite3.Binary(hashed_password), sqlite3.Binary(salt)))
 				if db_cursor.rowcount == 1:
 					db_conn.commit()
-					initialize(conn, login, response_token=True)
+					initialize(conn, login, new_user=True)
 				else:
 					return_status(conn, 0x10)
 
@@ -317,9 +325,21 @@ def handle_client(conn, addr):
 				if db_cursor.rowcount == 1:
 					db_conn.commit()
 					if creating_dir:
-						foreach_storage_server(server_create_dir, login)
+						foreach_storage_server(server_create_dir, (login, path))
 					else:
-						pass # TODO!!! Create file on some servers
+						# create file on some servers
+						db_cursor.execute('''
+							SELECT ip, port, COALESCE(sum(size), 0) as mem
+							FROM
+								(servers as s LEFT JOIN files_on_servers as fs ON s.id = fs.server_id)
+								LEFT JOIN file_structure as f ON f.id = fs.file_id
+							GROUP BY ip
+							ORDER BY mem ASC 
+							LIMIT 2
+						''')
+						for row in db_cursor.fetchall():
+							server = (str(ip_address(row[0])), row[1])
+							server_create_file(server, login, path)
 					return_status(conn, 0x00)
 				else:
 					return_status(conn, 0x30 if creating_dir else 0x20) # Unknown directory/file error
@@ -409,6 +429,8 @@ def handle_storage_server(conn, addr):
 	elif (id == 0x00): # new storage server
 		port = get_int(conn, 2)
 		storage_servers_list.add((addr[0], port))
+		db_cursor.execute("INSERT INTO servers (ip, port) VALUES (?, ?)", (int(ip_address(addr[0])), port))
+		db_conn.commit()
 		# TODO: tell full folder structure to storage server
 		storage_server_response(conn, 0x00)
 
