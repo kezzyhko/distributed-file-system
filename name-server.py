@@ -30,7 +30,7 @@ db_cursor = db_conn.cursor()
 db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-       login        VARCHAR(20) UNIQUE                NOT NULL,
+       login        VARCHAR(20)  UNIQUE               NOT NULL,
        password     BLOB(16)                          NOT NULL,
        salt         BLOB(5)                           NOT NULL
     );
@@ -40,7 +40,25 @@ db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS tokens (
        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
        login        VARCHAR(20)                       NOT NULL,
-       token        BLOB(32)    UNIQUE                NOT NULL
+       token        BLOB(32)     UNIQUE               NOT NULL
+    );
+''')
+
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS folders (
+       id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+       login        VARCHAR(20)                       NOT NULL,
+       path         VARCHAR(256) UNIQUE               NOT NULL
+    );
+''')
+
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS files (
+       id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+       login        VARCHAR(20)                       NOT NULL,
+       path         VARCHAR(256)                      NOT NULL,
+       server_ip    INTEGER(4)                        NOT NULL,
+       server_port  INTEGER(2)                        NOT NULL
     );
 ''')
 
@@ -177,6 +195,20 @@ def server_initialize(server, login):
 
 # HANDLE CLIENT
 
+def initialize(conn, login, return_token = False):
+	db_cursor.execute("DELETE FROM files   WHERE login = ?;", (login,))
+	db_cursor.execute("DELETE FROM folders WHERE login = ?;", (login,))
+	db_cursor.execute("INSERT INTO folders (login, path) VALUES (?, ?);", (login, '/'))
+	if db_cursor.rowcount == 1:
+		db_conn.commit()
+		foreach_storage_server(server_initialize, login)
+		if return_token:
+			return_token(conn, login)
+		else:
+			return_status(conn, 0x00)
+	else:
+		return_status(conn, 0x20)
+
 def handle_client(conn, addr):
 	log('Got connection from client {}'.format(addr))
 	id = get_int(conn)
@@ -210,8 +242,7 @@ def handle_client(conn, addr):
 				db_cursor.execute("INSERT INTO users (login, password, salt) VALUES (?, ?, ?);", (login, sqlite3.Binary(hashed_password), sqlite3.Binary(salt)))
 				if db_cursor.rowcount == 1:
 					db_conn.commit()
-					foreach_storage_server(server_initialize, login)
-					return_token(conn, login)
+					initialize(conn, login, return_token=True)
 				else:
 					return_status(conn, 0x10)
 
@@ -233,8 +264,7 @@ def handle_client(conn, addr):
 
 	elif (id == 0x03): # initialize
 		login = get_login(conn)
-		foreach_storage_server(server_initialize, login)
-		return_status(conn, 0x00)
+		initialize(conn, login)
 
 	elif (id == 0x04): # file create
 		login = get_login(conn)
