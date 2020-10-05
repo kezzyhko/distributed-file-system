@@ -29,36 +29,48 @@ db_cursor = db_conn.cursor()
 
 db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
-       id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-       login        VARCHAR(20)  UNIQUE               NOT NULL,
-       password     BLOB(16)                          NOT NULL,
-       salt         BLOB(5)                           NOT NULL
+        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        login        VARCHAR(20)  UNIQUE               NOT NULL,
+        password     BLOB(16)                          NOT NULL,
+        salt         BLOB(5)                           NOT NULL
     );
 ''')
 
 db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS tokens (
-       id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-       login        VARCHAR(20)                       NOT NULL,
-       token        BLOB(32)     UNIQUE               NOT NULL
+        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        login        VARCHAR(20)                       NOT NULL,
+        token        BLOB(32)     UNIQUE               NOT NULL,
+        FOREIGN KEY (login) REFERENCES users (login)
     );
 ''')
 
 db_cursor.execute('''
-    CREATE TABLE IF NOT EXISTS folders (
-       id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-       login        VARCHAR(20)                       NOT NULL,
-       path         VARCHAR(256) UNIQUE               NOT NULL
+    CREATE TABLE IF NOT EXISTS file_structure (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        login        VARCHAR(20)                       NOT NULL,
+        path         VARCHAR(256)                      NOT NULL,
+        size         INTEGER(4),
+        FOREIGN KEY (login) REFERENCES users (login),
+        UNIQUE (path, size)
     );
 ''')
 
 db_cursor.execute('''
-    CREATE TABLE IF NOT EXISTS files (
-       id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-       login        VARCHAR(20)                       NOT NULL,
-       path         VARCHAR(256)                      NOT NULL,
-       server_ip    INTEGER(4)                        NOT NULL,
-       server_port  INTEGER(2)                        NOT NULL
+    CREATE TABLE IF NOT EXISTS servers (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        ip           INTEGER(4)                        NOT NULL,
+        port         INTEGER(2)                        NOT NULL
+    );
+''')
+
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS files_on_servers (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        file_id      INTEGER                           NOT NULL,
+        server_id    INTEGER                           NOT NULL,
+        FOREIGN KEY (file_id) REFERENCES file_structure (id),
+        FOREIGN KEY (server_id) REFERENCES servers (id)
     );
 ''')
 
@@ -212,9 +224,8 @@ def server_initialize(server, login):
 # HANDLE CLIENT
 
 def initialize(conn, login, response_token = False):
-	db_cursor.execute("DELETE FROM files   WHERE login = ?;", (login,))
-	db_cursor.execute("DELETE FROM folders WHERE login = ?;", (login,))
-	db_cursor.execute("INSERT INTO folders (login, path) VALUES (?, ?);", (login, '/'))
+	db_cursor.execute("DELETE FROM file_structure WHERE login = ?;", (login,))
+	db_cursor.execute("INSERT INTO file_structure (login, path) VALUES (?, ?);", (login, '/'))
 	if db_cursor.rowcount == 1:
 		db_conn.commit()
 		foreach_storage_server(server_initialize, login)
@@ -235,7 +246,7 @@ def handle_client(conn, addr):
 	elif (id == 0x00): # logout
 		token = get_data(conn, 32)
 		db_cursor.execute("DELETE FROM tokens WHERE token = ?;", (token,))
-		db_cursor.execute("SELECT FROM tokens WHERE token = ?;", (token,))
+		db_cursor.execute("SELECT token FROM tokens WHERE token = ?;", (token,))
 		if db_cursor.fetchone() == None:
 			db_conn.commit()
 			return_status(conn, 0x00)
