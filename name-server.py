@@ -95,6 +95,22 @@ def foreach_storage_server(func, additional_params=(), delays=False):
 def get_folder(login, path='/'):
 	return '%s%s%s' % (ROOT_FOLDER, login, path)
 
+def is_valid_filename(string):
+	# check special conditions
+	if	(string == '' or
+		string[0] == ' ' or
+		string[-1] == ' ' or
+		string[-1] == '.'):
+			return False
+	
+	# check each prohibited char
+	for c in "\x00\\\"/:*<>|?":
+		if c in string:
+			return False
+
+	# all good
+	return True
+
 
 
 # RECEIVING DATA FUNCTIONS
@@ -229,7 +245,7 @@ def handle_client(conn, addr):
 	elif (id == 0x01): # register
 		login = get_fixed_len_string(conn, 20)
 		password = get_var_len_string(conn)
-		if (not login.isalnum()):
+		if (not is_valid_filename(login)):
 			return_status(conn, 0x12) # Invalid username during registration
 		else:
 			db_cursor.execute("SELECT login FROM users WHERE login = ?", (login,))
