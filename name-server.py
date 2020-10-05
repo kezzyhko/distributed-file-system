@@ -295,7 +295,29 @@ def handle_client(conn, addr):
 
 	elif (id == 0x04): # file create
 		login = get_login(conn)
-		filename = get_var_len_string(conn)
+		filepath = get_var_len_string(conn)
+		folder, _, filename = filepath.rpartition('/')
+
+		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ?;", (login, filepath))
+		row = db_cursor.fetchone()
+		if row != None:
+			return_status(conn, 0x32 if row[0] == None else 0x22) # Directory/File already exists
+		else:
+			db_cursor.execute("SELECT path FROM file_structure WHERE size = NULL AND login = ? AND path = ?;", (login, folder))
+			if db_cursor.fetchone() != None:
+				return_status(conn, 0x31) # Directory does not exist
+			elif not is_valid_filename(filename):
+				return_status(conn, 0x24) # Prohibited filename
+			else:
+				# creating file
+				db_cursor.execute("INSERT INTO file_structure (login, path, size) VALUES (?, ?, 0);", (login, filename))
+				if db_cursor.rowcount == 1:
+					db_conn.commit()
+					# foreach_storage_server(server_initialize, login)
+					# TODO!!! Create file on some servers
+					return_status(conn, 0x00)
+				else:
+					return_status(conn, 0x20)
 
 	elif (id == 0x05): # file read
 		login = get_login(conn)
