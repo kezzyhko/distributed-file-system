@@ -23,7 +23,6 @@ PING_TIMEOUT = 5
 
 db_conn = sqlite3.connect(
 	DATABASE,
-	isolation_level = None, # enable autocommits
 	check_same_thread = False
 ) 
 db_cursor = db_conn.cursor()
@@ -44,6 +43,8 @@ db_cursor.execute('''
        token        BLOB(32)    UNIQUE                NOT NULL
     );
 ''')
+
+db_conn.commit()
 
 
 
@@ -122,9 +123,13 @@ def return_token(conn, login):
 	log('Successfull login/registration as "%s"' % login)
 	token = token_bytes(32)
 	db_cursor.execute("INSERT INTO tokens (login, token) VALUES (?, ?);", (login, sqlite3.Binary(token)))
-	conn.send(b'\x00')
-	conn.send(token)
-	conn.close()
+	if db_cursor.rowcount == 1:
+		db_conn.commit()
+		conn.send(b'\x00')
+		conn.send(token)
+		conn.close()
+	else:
+		return_status(conn, 0x10) # Unknown auth error
 
 def storage_server_response(conn, code):
 	log('Returned status code %02x' % code)
@@ -182,7 +187,12 @@ def handle_client(conn, addr):
 	elif (id == 0x00): # logout
 		token = get_data(conn, 32)
 		db_cursor.execute("DELETE FROM tokens WHERE token = ?;", (token,))
-		return_status(conn, 0x00)
+		db_cursor.execute("SELECT FROM tokens WHERE token = ?;", (token,))
+		if db_cursor.fetchone() == None:
+			db_conn.commit()
+			return_status(conn, 0x00)
+		else:
+			return_status(conn, 0x10)
 
 	elif (id == 0x01): # register
 		login = get_fixed_len_string(conn, 20)
@@ -198,8 +208,12 @@ def handle_client(conn, addr):
 				salt = token_bytes(5)
 				hashed_password = password_hash('sha256', password.encode('utf-8'), salt, 100000)
 				db_cursor.execute("INSERT INTO users (login, password, salt) VALUES (?, ?, ?);", (login, sqlite3.Binary(hashed_password), sqlite3.Binary(salt)))
-				foreach_storage_server(server_initialize, login)
-				return_token(conn, login)
+				if db_cursor.rowcount == 1:
+					db_conn.commit()
+					foreach_storage_server(server_initialize, login)
+					return_token(conn, login)
+				else:
+					return_status(conn, 0x10)
 
 	elif (id == 0x02): # login
 		login = get_fixed_len_string(conn, 20)
@@ -220,6 +234,7 @@ def handle_client(conn, addr):
 	elif (id == 0x03): # initialize
 		login = get_login(conn)
 		foreach_storage_server(server_initialize, login)
+		return_status(conn, 0x00)
 
 	elif (id == 0x04): # file create
 		login = get_login(conn)
