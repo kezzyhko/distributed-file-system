@@ -302,8 +302,7 @@ def handle_client(conn, addr):
 		source = get_fixed_len_string(conn, source_len)
 		destination = get_fixed_len_string(conn, destination_len)
 
-	elif (id == 0x0B): # open dir, deprecated
-		pass # TODO: error
+	#     id == 0x0B   # open dir, deprecated
 
 	elif (id == 0x0C): # directory read
 		login = get_login(conn)
@@ -320,7 +319,7 @@ def handle_client(conn, addr):
 		foreach_storage_server(server_remove_dir, login)
 
 	else: # unknown id
-		pass # TODO: return error
+		return_status(conn, 0x81)
 
 	log('Thread end')
 
@@ -351,7 +350,7 @@ def handle_storage_server(conn, addr):
 		storage_server_response(conn, 0x00)
 
 	else: # unknown id
-		pass # TODO: return error
+		return_status(conn, 0x81)
 
 	log('Thread end')
 
