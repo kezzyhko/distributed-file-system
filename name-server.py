@@ -110,7 +110,7 @@ def get_login(conn):
 
 
 
-# CLIEN RESPONSE FUNCTIONS
+# RESPONSE FUNCTIONS
 
 def return_status(conn, code, message=''):
 	log('Returned status code %02x with message "%s"' % (code, message))
