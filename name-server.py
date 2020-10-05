@@ -162,7 +162,9 @@ def return_status(conn, code, message=''):
 	log('Returned status code %02x with message "%s"' % (code, message))
 	l = len(message)
 	conn.send(bytes([code, l//256, l%256]))
-	conn.send(message.encode('utf-8'))
+	if (isinstance(message, str)):
+		message = message.encode('utf-8')
+	conn.send(message)
 	conn.close()
 
 def return_token(conn, login):
@@ -335,7 +337,13 @@ def handle_client(conn, addr):
 
 	elif (id == 0x08): # file info
 		login = get_login(conn)
-		filename = get_var_len_string(conn)
+		filepath = get_var_len_string(conn)
+
+		db_cursor.execute("SELECT size FROM file_structure WHERE size != NULL AND login = ? AND path = ?;", (login, filepath))
+		if row == None:
+			return_status(conn, 0x21) # File does not exist
+		else:
+			return_status(conn, 0x00, int.to_bytes(row[0], 4, 'big'))
 
 	elif (id == 0x09): # file copy
 		login = get_login(conn)
