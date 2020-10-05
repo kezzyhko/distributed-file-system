@@ -334,9 +334,28 @@ def handle_client(conn, addr):
 		size = get_int(conn, 4)
 		filename = get_fixed_len_string(conn, filename_len)
 
-	elif (id == 0x07): # file delete
+	elif (id == 0x07 or id == 0x0E): # file/directory delete
 		login = get_login(conn)
 		filename = get_var_len_string(conn)
+		deleting_dir = (id == 0x0E)
+
+		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ?;", (login, path))
+		row = db_cursor.fetchone()
+		if (row == None) or (deleting_dir != (row[0] == None)):
+			return_status(conn, 0x31 if deleting_dir else 0x21) # Directory/File does not exist
+		else:
+			# finally, deleting file/directory
+			db_cursor.execute("DELETE FROM file_structure WHERE login = ? AND path = ?;", (login, path))
+			if db_cursor.rowcount == 1:
+				db_conn.commit()
+				if deleting_dir:
+					foreach_storage_server(server_remove_dir, login)
+				else:
+					pass # TODO!!! Delete file from servers
+				return_status(conn, 0x00)
+			else:
+				return_status(conn, 0x30 if deleting_dir else 0x20) # Unknown directory/file error
+
 
 	elif (id == 0x08): # file info
 		login = get_login(conn)
@@ -369,11 +388,7 @@ def handle_client(conn, addr):
 		dirname = get_var_len_string(conn)
 
 	#     id == 0x0D   # look above
-
-	elif (id == 0x0E): # directory delete
-		login = get_login(conn)
-		dirname = get_var_len_string(conn)
-		foreach_storage_server(server_remove_dir, login)
+	#     id == 0x0E   # look above
 
 	else: # unknown id
 		return_status(conn, 0x81)
