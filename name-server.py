@@ -295,11 +295,11 @@ def handle_client(conn, addr):
 		login = get_login(conn)
 		initialize(conn, login)
 
-	elif (id == 0x04 or id == 0x0D): # file/directory create
+	elif (id == 0x04 or id == 0x0C): # file/directory create
 		login = get_login(conn)
 		path = get_var_len_string(conn)
 		folder, _, filename = path.rpartition('/')
-		creating_dir = (id == 0x0D)
+		creating_dir = (id == 0x0C)
 
 		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ?;", (login, path))
 		row = db_cursor.fetchone()
@@ -334,10 +334,10 @@ def handle_client(conn, addr):
 		size = get_int(conn, 4)
 		filename = get_fixed_len_string(conn, filename_len)
 
-	elif (id == 0x07 or id == 0x0E): # file/directory delete
+	elif (id == 0x07 or id == 0x0D): # file/directory delete
 		login = get_login(conn)
 		filename = get_var_len_string(conn)
-		deleting_dir = (id == 0x0E)
+		deleting_dir = (id == 0x0D)
 
 		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ?;", (login, path))
 		row = db_cursor.fetchone()
@@ -381,14 +381,12 @@ def handle_client(conn, addr):
 		source = get_fixed_len_string(conn, source_len)
 		destination = get_fixed_len_string(conn, destination_len)
 
-	#     id == 0x0B   # open dir, deprecated
-
-	elif (id == 0x0C): # directory read
+	elif (id == 0x0B): # directory read
 		login = get_login(conn)
 		dirname = get_var_len_string(conn)
 
+	#     id == 0x0C   # look above
 	#     id == 0x0D   # look above
-	#     id == 0x0E   # look above
 
 	else: # unknown id
 		return_status(conn, 0x81)
