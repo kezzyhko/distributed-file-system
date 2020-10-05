@@ -183,6 +183,15 @@ def return_token(conn, login):
 	else:
 		return_status(conn, 0x10) # Unknown auth error
 
+def return_server(conn, ip, port, token):
+	log('Returned server %s:%d' % (str(ip), port))
+	conn.send(b'\x00')
+	conn.send(b'\x01' if ip.version == 4 else b'\x02')
+	conn.send(bytes([port//256, port%256]))
+	conn.send(int(ip).to_bytes(4 if ip.version == 4 else 16, 'big'))
+	conn.send(token)
+	conn.close()
+
 def storage_server_response(conn, code):
 	log('Returned status code %02x' % code)
 	conn.send(bytes([code]))
@@ -346,7 +355,33 @@ def handle_client(conn, addr):
 
 	elif (id == 0x05): # file read
 		login = get_login(conn)
-		filename = get_var_len_string(conn)
+		filepath = get_var_len_string(conn)
+
+		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ? AND size IS NOT NULL;", (login, filepath))
+		row = db_cursor.fetchone()
+		if row == None:
+			return_status(conn, 0x21) # File does not exist
+		else:
+			db_cursor.execute('''
+				SELECT ip, port
+				FROM servers as s, file_structure as f, files_on_servers as fs
+				WHERE s.id = fs.server_id AND f.id = fs.file_id
+				AND login = ? AND path = ?
+				LIMIT 1
+			''', (login, filepath))
+			row = db_cursor.fetchone()
+			if row == None:
+				return_status(conn, 0x80) # Unknown server error, but actiually there is not storage servers with this file
+			else:
+				ip = ip_address(row[0])
+				port = row[1]
+				token = token_bytes(16)
+				res = server_send((str(ip), port), ['\x00', token, len(filename), filename])
+				if not res:
+					return_status(conn, 0x80) # Unknown server error, but actually we just could not connect to the server with the file
+					# TODO: try to connect to other servers
+				else:
+					return_server(conn, ip, port, token)
 
 	elif (id == 0x06): # file write
 		login = get_login(conn)
