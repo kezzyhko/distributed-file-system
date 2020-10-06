@@ -493,10 +493,42 @@ def handle_storage_server(conn, addr):
 
 	elif (id == 0x01): # report
 		operation = get_int(conn)
-		entity_type = get_int(conn)
-		name = get_var_len_string(conn)
+		entity_type = get_int(conn) # it is not used, but may be it will be in the future
+		path_on_server = get_var_len_string(conn)
+		login, _, path = path_on_server.lpartition('/')
+		ip = int(ip_addr(addr[0]))
+
 		# TODO: change in the database
-		storage_server_response(conn, 0x00)
+		if   operation == 0x00: # deleted
+			db_cursor.execute('''
+				DELETE FROM files_on_servers WHERE id IN (
+					SELECT fs.id
+					FROM files_on_servers as fs, servers AS s, file_structure AS f
+					WHERE fs.server_id = s.id AND fs.file_id = f.id
+					AND login = ? AND path = ? AND ip = ?
+				);
+			''', (login, path, ip))
+			if db_cursor.rowcount == 1:
+				db_conn.commit()
+				storage_server_response(conn, 0x00) # OK
+			else:
+				storage_server_response(conn, 0x80) # Unknown server error
+
+		elif operation == 0x01: # created
+			db_cursor.execute('''
+				INSERT INTO files_on_servers (server_id, file_id) VALUES (
+					(SELECT id FROM servers WHERE ip = ?),
+					(SELECT id FROM file_structure WHERE login = ? AND path = ?)
+				);
+			''', (ip, login, path))
+			if db_cursor.rowcount == 1:
+				db_conn.commit()
+				storage_server_response(conn, 0x00) # OK
+			else:
+				storage_server_response(conn, 0x80) # Unknown server error
+
+		else:
+			storage_server_response(conn, 0x81) # Wrong request id
 
 	else: # unknown id
 		return_status(conn, 0x81)
