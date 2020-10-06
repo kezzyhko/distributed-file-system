@@ -487,9 +487,12 @@ def handle_storage_server(conn, addr):
 		port = get_int(conn, 2)
 		storage_servers_list.add((addr[0], port))
 		db_cursor.execute("INSERT INTO servers (ip, port) VALUES (?, ?)", (int(ip_address(addr[0])), port))
-		db_conn.commit()
-		# TODO: tell full folder structure to storage server
-		storage_server_response(conn, 0x00)
+		if db_cursor.rowcount == 1:
+			db_conn.commit()
+			# TODO: tell full folder structure to storage server
+			storage_server_response(conn, 0x00) # OK
+		else:
+			storage_server_response(conn, 0x80) # Unknown server error
 
 	elif (id == 0x01): # report
 		operation = get_int(conn)
