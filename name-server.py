@@ -107,7 +107,7 @@ def foreach_storage_server(func, additional_params=(), delays=False, servers=Non
 
 	return errors
 
-def get_folder(login, path=''):
+def get_path_on_storage_server(login, path=''):
 	if path == '':
 		return '%s%s' % (ROOT_FOLDER, login)
 	else:
@@ -226,17 +226,17 @@ def server_ping(server, _):
 	return server_send(server, [b'\x04'])
 
 def server_create_dir(server, login, path=''):
-	return server_eval(server, "os.makedirs('%s')" % get_folder(login, path))
+	return server_eval(server, "os.makedirs('%s')" % get_path_on_storage_server(login, path))
 
-def server_remove_dir(server, login, path=''):
-	return server_eval(server, "rmtree('%s')" % get_folder(login, path))
+def server_delete_dir(server, login, path=''):
+	return server_eval(server, "rmtree('%s')" % get_path_on_storage_server(login, path))
 
 def server_create_file(server, login, path):
-	return server_eval(server, "open('%s', 'a').close()" % get_folder(login, path))
+	return server_eval(server, "open('%s', 'a').close()" % get_path_on_storage_server(login, path))
 
 def server_initialize(server, login, new_user=False):
 	if not new_user:
-		res1 = server_remove_dir(server, login)
+		res1 = server_delete_dir(server, login)
 		if not res1: return False
 	res2 = server_create_dir(server, login)
 	return res2
@@ -367,9 +367,10 @@ def handle_client(conn, addr):
 					elif (action == 'file_write'):
 						token = token_bytes(16)
 						servers = get_servers_for_upload(count = 1, filesize = size)
+						path_on_server = get_path_on_storage_server(login, path)
 						foreach_storage_server(
 							server_send_data,
-							([b'\x00', token, len(path), path],),
+							([b'\x00', token, len(path_on_server), path_on_server],),
 							servers = servers
 						)
 						# TODO: check other servers if this is unreachable?
@@ -426,7 +427,7 @@ def handle_client(conn, addr):
 			if db_cursor.rowcount == 1:
 				db_conn.commit()
 				if deleting_dir:
-					foreach_storage_server(server_remove_dir, login)
+					foreach_storage_server(server_delete_dir, login)
 				else:
 					pass # TODO!!! Delete file from servers
 				return_status(conn, 0x00)
