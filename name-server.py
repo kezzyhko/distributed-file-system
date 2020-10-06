@@ -171,19 +171,19 @@ def get_servers_with_files(login, path, count = 1):
 
 # RECEIVING DATA FUNCTIONS
 
-def get_data(conn, len):
-	return conn.recv(len)
+def get_data(conn, length):
+	return conn.recv(length)
 
-def get_int(conn, len=1):
-	data = get_data(conn, len)
+def get_int(conn, length=1):
+	data = get_data(conn, length)
 	result = 0
 	for byte in data:
 		result <<= 8
 		result |= byte
 	return result
 
-def get_fixed_len_string(conn, len):
-	return get_data(conn, len).decode('utf-8').rstrip('\x00')
+def get_fixed_len_string(conn, length):
+	return get_data(conn, length).decode('utf-8').rstrip('\x00')
 
 def get_var_len_string(conn, length_of_lenght = 1):
 	return get_fixed_len_string(conn, get_int(conn, length_of_lenght))
@@ -243,12 +243,15 @@ def storage_server_response(conn, code):
 # STORAGE SERVER QUERIES
 
 def server_send(server, data):
+	log("Sending data to {}".format(server))
 	try:
 		conn = socket()
 		conn.settimeout(PING_TIMEOUT)
 		conn.connect(server)
 		for d in data:
+			log("Sending {}".format(d))
 			conn.send(d)
+			log("Sent {}".format(d))
 		return (get_int(conn) == 0)
 	except socket_error as e: 
 		log('Could not connect to {}'.format(server))
@@ -259,7 +262,7 @@ def server_send(server, data):
 def server_eval(server, cmd):
 	return server_send(server, [b'\x03', bytes([len(cmd)]), cmd.encode('utf-8')])
 
-def server_ping(server, _):
+def server_ping(server):
 	log('Send ping to {}'.format(server))
 	return server_send(server, [b'\x04'])
 
@@ -393,11 +396,12 @@ def handle_client(conn, addr):
 						path_on_server = get_path_on_storage_server(login, path)
 						foreach_storage_server(
 							server_send,
-							([b'\x00', token, len(path_on_server), path_on_server.encode('utf-8')],),
+							([b'\x01', token, int.to_bytes(size, 4, 'big'), bytes([len(path_on_server)]), path_on_server.encode('utf-8')],),
 							servers = servers
 						)
 						# TODO: check other servers if this is unreachable?
-						return_server(conn, servers[0][0], servers[0][1], token)
+						server = servers.pop()
+						return_server(conn, server[0], server[1], token)
 					else:
 						return_status(conn, 0x80) # Unknown error
 				else:
@@ -416,13 +420,14 @@ def handle_client(conn, addr):
 			if len(servers) == 0:
 				return_status(conn, 0x80) # Unknown server error, but actiually there is not storage servers with this file
 			else:
+				server = servers.pop()
 				token = token_bytes(16)
-				res = server_send(servers[0], ['\x00', token, len(filename), filename.encode('utf-8')])
+				res = server_send(server, ['\x00', token, bytes([len(filename)]), filename.encode('utf-8')])
 				if not res:
 					return_status(conn, 0x80) # Unknown server error, but actually we just could not connect to the server with the file
 					# TODO: try to connect to other servers
 				else:
-					return_server(conn, servers[0][0], servers[0][1], token)
+					return_server(conn, server[0], server[1], token)
 
 	#     id == 0x06   # look above
 
