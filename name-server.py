@@ -93,7 +93,7 @@ def get_function_by_addr(addr):
 		return handle_client
 
 def foreach_storage_server(func, additional_params=(), delays=False, servers=None):
-	storage_servers_list_copy = storage_servers_list.copy if (servers == None) else servers.copy()
+	storage_servers_list_copy = storage_servers_list.copy() if (servers == None) else servers.copy()
 	errors = set()
 
 	for server in storage_servers_list_copy:
@@ -202,11 +202,11 @@ def get_login(conn):
 # RESPONSE FUNCTIONS
 
 def return_status(conn, code, message=''):
-	log('Returned status code %02x with message "%s"' % (code, message))
 	l = len(message)
 	conn.send(bytes([code, l//256, l%256]))
 	if (isinstance(message, str)):
 		message = message.encode('utf-8')
+	log('Returned status code %02x with message %s' % (code, message))
 	conn.send(message)
 	conn.close()
 
@@ -391,8 +391,8 @@ def handle_client(conn, addr):
 						servers = get_servers_for_upload(count = 1, filesize = size)
 						path_on_server = get_path_on_storage_server(login, path)
 						foreach_storage_server(
-							server_send_data,
-							([b'\x00', token, len(path_on_server), path_on_server],),
+							server_send,
+							([b'\x00', token, len(path_on_server), path_on_server.encode('utf-8')],),
 							servers = servers
 						)
 						# TODO: check other servers if this is unreachable?
@@ -416,7 +416,7 @@ def handle_client(conn, addr):
 				return_status(conn, 0x80) # Unknown server error, but actiually there is not storage servers with this file
 			else:
 				token = token_bytes(16)
-				res = server_send(servers[0], ['\x00', token, len(filename), filename])
+				res = server_send(servers[0], ['\x00', token, len(filename), filename.encode('utf-8')])
 				if not res:
 					return_status(conn, 0x80) # Unknown server error, but actually we just could not connect to the server with the file
 					# TODO: try to connect to other servers
@@ -455,6 +455,7 @@ def handle_client(conn, addr):
 		filepath = get_var_len_string(conn)
 
 		db_cursor.execute("SELECT size FROM file_structure WHERE size IS NOT NULL AND login = ? AND path = ?;", (login, filepath))
+		row = db_cursor.fetchone()
 		if row == None:
 			return_status(conn, 0x21) # File does not exist
 		else:
