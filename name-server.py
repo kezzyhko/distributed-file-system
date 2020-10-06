@@ -17,6 +17,7 @@ ROOT_FOLDER = '/files/'
 DATABASE = 'database.db'
 PING_DELAY = 60
 PING_TIMEOUT = 5
+STORAGE_SERVER_MEMORY = 2 ** (8 * 4) # 4GB
 
 
 
@@ -91,14 +92,15 @@ def get_function_by_addr(addr):
 	else:
 		return handle_client
 
-def foreach_storage_server(func, additional_params=(), delays=False):
-	storage_servers_list_copy = storage_servers_list.copy()
+def foreach_storage_server(func, additional_params=(), delays=False, servers=None):
+	storage_servers_list_copy = storage_servers_list.copy if (servers == None) else servers.copy()
 	errors = set()
 
 	for server in storage_servers_list_copy:
 		res = func(server, *additional_params)
 		if not res:
 			storage_servers_list.remove(server)
+			# TODO: remove from db
 			errors.add(server)
 			if delays: sleep(PING_DELAY / len(storage_servers_list_copy))
 	if delays: sleep(PING_DELAY / len(storage_servers_list_copy))
@@ -184,6 +186,7 @@ def return_token(conn, login):
 		return_status(conn, 0x10) # Unknown auth error
 
 def return_server(conn, ip, port, token):
+	ip = ip_address(ip)
 	log('Returned server %s:%d' % (str(ip), port))
 	conn.send(b'\x00')
 	conn.send(b'\x01' if ip.version == 4 else b'\x02')
@@ -255,14 +258,30 @@ def initialize(conn, login, new_user=False):
 	else:
 		return_status(conn, 0x30)
 
+def get_servers_for_upload(count = 2, filesize = 0):
+	db_cursor.execute('''
+		SELECT ip, port, COALESCE(sum(size), 0) as mem
+		FROM
+			(servers as s LEFT JOIN files_on_servers as fs ON s.id = fs.server_id)
+			LEFT JOIN file_structure as f ON f.id = fs.file_id
+		GROUP BY ip
+		ORDER BY mem ASC 
+		LIMIT ?
+	''', (count,))
+	servers = set()
+	for row in db_cursor.fetchall():
+		servers.add((str(ip_address(row[0])), row[1]))
+	# TODO
+	# check if 'servers' are empty
+	# check if STORAGE_SERVER_MEMORY - mem > filesize
+	# return return 'not enough memory' in these cases
+	return servers
+
 def handle_client(conn, addr):
 	log('Got connection from client {}'.format(addr))
 	id = get_int(conn)
 
-	if False: # for aligning conditions below
-		pass
-
-	elif (id == 0x00): # logout
+	if   (id == 0x00): # logout
 		token = get_data(conn, 32)
 		db_cursor.execute("DELETE FROM tokens WHERE token = ?;", (token,))
 		db_cursor.execute("SELECT token FROM tokens WHERE token = ?;", (token,))
@@ -312,11 +331,17 @@ def handle_client(conn, addr):
 		login = get_login(conn)
 		initialize(conn, login)
 
-	elif (id == 0x04 or id == 0x0C): # file/directory create
+	elif (id == 0x04 or id == 0x06 or id == 0x0C): # file create / file write / directory create
+		action = 'file_create' if (id == 0x04) else ('file_write' if id == 0x06 else 'directory_create')
 		login = get_login(conn)
-		path = get_var_len_string(conn)
+		if (id == 0x06): # file write
+			path_len = get_int(conn)
+			size = get_int(conn, 4)
+			path = get_fixed_len_string(conn, path_len)
+		else:            # file/directory create
+			size = None if (action == 'directory_create') else 0
+			path = get_var_len_string(conn)
 		folder, _, filename = path.rpartition('/')
-		creating_dir = (id == 0x0C)
 
 		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ?;", (login, path))
 		row = db_cursor.fetchone()
@@ -327,31 +352,32 @@ def handle_client(conn, addr):
 			if db_cursor.fetchone() != None:
 				return_status(conn, 0x31) # Directory does not exist
 			elif not is_valid_filename(filename):
-				return_status(conn, 0x33 if creating_dir else 0x24) # Prohibited directory/file name
+				return_status(conn, 0x33 if (action == 'directory_create') else 0x24) # Prohibited directory/file name
 			else:
 				# finally, creating file/directory
-				db_cursor.execute("INSERT INTO file_structure (login, path, size) VALUES (?, ?, ?);", (login, path, None if creating_dir else 0))
+				db_cursor.execute("INSERT INTO file_structure (login, path, size) VALUES (?, ?, ?);", (login, path, size))
 				if db_cursor.rowcount == 1:
 					db_conn.commit()
-					if creating_dir:
+					if (action == 'directory_create'):
 						foreach_storage_server(server_create_dir, (login, path))
+						return_status(conn, 0x00)
+					elif (action == 'file_create'):
+						foreach_storage_server(server_create_file, (login, path), servers = get_servers_for_upload(count = 2))
+						return_status(conn, 0x00)
+					elif (action == 'file_write'):
+						token = token_bytes(16)
+						servers = get_servers_for_upload(count = 1, filesize = size)
+						foreach_storage_server(
+							server_send_data,
+							([b'\x00', token, len(path), path],),
+							servers = servers
+						)
+						# TODO: check other servers if this is unreachable?
+						return_server(conn, servers[0][0], servers[0][1], token)
 					else:
-						# create file on some servers
-						db_cursor.execute('''
-							SELECT ip, port, COALESCE(sum(size), 0) as mem
-							FROM
-								(servers as s LEFT JOIN files_on_servers as fs ON s.id = fs.server_id)
-								LEFT JOIN file_structure as f ON f.id = fs.file_id
-							GROUP BY ip
-							ORDER BY mem ASC 
-							LIMIT 2
-						''')
-						for row in db_cursor.fetchall():
-							server = (str(ip_address(row[0])), row[1])
-							server_create_file(server, login, path)
-					return_status(conn, 0x00)
+						return_status(conn, 0x80) # Unknown error
 				else:
-					return_status(conn, 0x30 if creating_dir else 0x20) # Unknown directory/file error
+					return_status(conn, 0x30 if (action == 'directory_create') else 0x20) # Unknown directory/file error
 
 	elif (id == 0x05): # file read
 		login = get_login(conn)
@@ -383,11 +409,7 @@ def handle_client(conn, addr):
 				else:
 					return_server(conn, ip, port, token)
 
-	elif (id == 0x06): # file write
-		login = get_login(conn)
-		filename_len = get_int(conn)
-		size = get_int(conn, 4)
-		filename = get_fixed_len_string(conn, filename_len)
+	#     id == 0x06   # look above
 
 	elif (id == 0x07 or id == 0x0D): # file/directory delete
 		login = get_login(conn)
