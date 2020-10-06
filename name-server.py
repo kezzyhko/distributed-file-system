@@ -131,6 +131,43 @@ def is_valid_filename(string):
 
 
 
+# DATABASE FUNCTION
+
+def servers_from_db_format(db_format_servers):
+	servers = set()
+	for row in db_format_servers:
+		servers.add((str(ip_address(row[0])), row[1]))
+	return servers
+
+def get_servers_for_upload(count = 2, filesize = 0):
+	db_cursor.execute('''
+		SELECT ip, port, COALESCE(sum(size), 0) as mem
+		FROM
+			(servers as s LEFT JOIN files_on_servers as fs ON s.id = fs.server_id)
+			LEFT JOIN file_structure as f ON f.id = fs.file_id
+		GROUP BY ip
+		ORDER BY mem ASC 
+		LIMIT ?
+	''', (count,))
+	servers = servers_from_db_format(db_cursor.fetchall())
+	# TODO
+	# check if 'servers' are empty
+	# check if STORAGE_SERVER_MEMORY - mem > filesize
+	# return return 'not enough memory' in these cases
+	return servers
+
+def get_servers_with_files(login, path, count = 1):
+	db_cursor.execute('''
+		SELECT ip, port
+		FROM servers as s, file_structure as f, files_on_servers as fs
+		WHERE s.id = fs.server_id AND f.id = fs.file_id
+		AND login = ? AND path = ?
+		LIMIT ?
+	''', (login, path, count))
+	return servers_from_db_format(db_cursor.fetchall())
+
+
+
 # RECEIVING DATA FUNCTIONS
 
 def get_data(conn, len):
@@ -234,6 +271,10 @@ def server_delete_dir(server, login, path=''):
 def server_create_file(server, login, path):
 	return server_eval(server, "open('%s', 'a').close()" % get_path_on_storage_server(login, path))
 
+def server_delete_file(server, login, path):
+	# TODO: remove from db?
+	return server_eval(server, "os.remove('%s')" % get_path_on_storage_server(login, path))
+
 def server_initialize(server, login, new_user=False):
 	if not new_user:
 		res1 = server_delete_dir(server, login)
@@ -257,25 +298,6 @@ def initialize(conn, login, new_user=False):
 			return_status(conn, 0x00)
 	else:
 		return_status(conn, 0x30)
-
-def get_servers_for_upload(count = 2, filesize = 0):
-	db_cursor.execute('''
-		SELECT ip, port, COALESCE(sum(size), 0) as mem
-		FROM
-			(servers as s LEFT JOIN files_on_servers as fs ON s.id = fs.server_id)
-			LEFT JOIN file_structure as f ON f.id = fs.file_id
-		GROUP BY ip
-		ORDER BY mem ASC 
-		LIMIT ?
-	''', (count,))
-	servers = set()
-	for row in db_cursor.fetchall():
-		servers.add((str(ip_address(row[0])), row[1]))
-	# TODO
-	# check if 'servers' are empty
-	# check if STORAGE_SERVER_MEMORY - mem > filesize
-	# return return 'not enough memory' in these cases
-	return servers
 
 def handle_client(conn, addr):
 	log('Got connection from client {}'.format(addr))
@@ -389,32 +411,23 @@ def handle_client(conn, addr):
 		if row == None:
 			return_status(conn, 0x21) # File does not exist
 		else:
-			db_cursor.execute('''
-				SELECT ip, port
-				FROM servers as s, file_structure as f, files_on_servers as fs
-				WHERE s.id = fs.server_id AND f.id = fs.file_id
-				AND login = ? AND path = ?
-				LIMIT 1
-			''', (login, filepath))
-			row = db_cursor.fetchone()
-			if row == None:
+			servers = get_servers_with_files(login, filepath, count = 1)
+			if len(servers) == 0:
 				return_status(conn, 0x80) # Unknown server error, but actiually there is not storage servers with this file
 			else:
-				ip = ip_address(row[0])
-				port = row[1]
 				token = token_bytes(16)
-				res = server_send((str(ip), port), ['\x00', token, len(filename), filename])
+				res = server_send(servers[0], ['\x00', token, len(filename), filename])
 				if not res:
 					return_status(conn, 0x80) # Unknown server error, but actually we just could not connect to the server with the file
 					# TODO: try to connect to other servers
 				else:
-					return_server(conn, ip, port, token)
+					return_server(conn, servers[0][0], servers[0][1], token)
 
 	#     id == 0x06   # look above
 
 	elif (id == 0x07 or id == 0x0D): # file/directory delete
 		login = get_login(conn)
-		filename = get_var_len_string(conn)
+		path = get_var_len_string(conn)
 		deleting_dir = (id == 0x0D)
 
 		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ?;", (login, path))
@@ -427,9 +440,11 @@ def handle_client(conn, addr):
 			if db_cursor.rowcount == 1:
 				db_conn.commit()
 				if deleting_dir:
-					foreach_storage_server(server_delete_dir, login)
+					foreach_storage_server(server_delete_dir, (login, path))
 				else:
-					pass # TODO!!! Delete file from servers
+					servers = get_servers_with_files(login, path)
+					foreach_storage_server(server_delete_file, servers = servers)
+					
 				return_status(conn, 0x00)
 			else:
 				return_status(conn, 0x30 if deleting_dir else 0x20) # Unknown directory/file error
