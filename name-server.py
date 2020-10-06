@@ -459,13 +459,18 @@ def handle_client(conn, addr):
 	elif (id == 0x08): # file info
 		login = get_login(conn)
 		filepath = get_var_len_string(conn)
+		_, _, filename = filepath.rpartition('/')
 
-		db_cursor.execute("SELECT size FROM file_structure WHERE size IS NOT NULL AND login = ? AND path = ?;", (login, filepath))
+		db_cursor.execute('''
+			SELECT size, count(server_id), created_on
+			FROM file_structure as f LEFT JOIN files_on_servers as fs ON fs.file_id = f.id
+			WHERE size IS NOT NULL AND login = ? AND path = ?;
+		''', (login, filepath))
 		row = db_cursor.fetchone()
 		if row == None:
 			return_status(conn, 0x21) # File does not exist
 		else:
-			return_status(conn, 0x00, int.to_bytes(row[0], 4, 'big'))
+			return_status(conn, 0x00, ("%d %d %s " % row) + filename)
 
 	elif (id == 0x09): # file copy
 		login = get_login(conn)
