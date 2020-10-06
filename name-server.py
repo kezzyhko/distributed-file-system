@@ -31,28 +31,29 @@ db_cursor = db_conn.cursor()
 
 db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        login        VARCHAR(20)  UNIQUE               NOT NULL,
-        password     BLOB(16)                          NOT NULL,
-        salt         BLOB(5)                           NOT NULL
+        id           INTEGER PRIMARY KEY AUTOINCREMENT  NOT NULL,
+        login        VARCHAR(20)  UNIQUE                NOT NULL,
+        password     BLOB(16)                           NOT NULL,
+        salt         BLOB(5)                            NOT NULL
     );
 ''')
 
 db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS tokens (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        login        VARCHAR(20)                       NOT NULL,
-        token        BLOB(32)     UNIQUE               NOT NULL,
+        id           INTEGER PRIMARY KEY AUTOINCREMENT  NOT NULL,
+        login        VARCHAR(20)                        NOT NULL,
+        token        BLOB(32)     UNIQUE                NOT NULL,
         FOREIGN KEY (login) REFERENCES users (login)
     );
 ''')
 
 db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS file_structure (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        login        VARCHAR(20)                       NOT NULL,
-        path         VARCHAR(256)                      NOT NULL,
+        id           INTEGER PRIMARY KEY AUTOINCREMENT  NOT NULL,
+        login        VARCHAR(20)                        NOT NULL,
+        path         VARCHAR(256)                       NOT NULL,
         size         INTEGER(4),
+        created_on   DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
         FOREIGN KEY (login) REFERENCES users (login),
         UNIQUE (path, size)
     );
@@ -60,17 +61,17 @@ db_cursor.execute('''
 
 db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS servers (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        ip           INTEGER(4)                        NOT NULL,
-        port         INTEGER(2)                        NOT NULL
+        id           INTEGER PRIMARY KEY AUTOINCREMENT  NOT NULL,
+        ip           INTEGER(4)                         NOT NULL,
+        port         INTEGER(2)                         NOT NULL
     );
 ''')
 
 db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS files_on_servers (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        file_id      INTEGER                           NOT NULL,
-        server_id    INTEGER                           NOT NULL,
+        id           INTEGER PRIMARY KEY AUTOINCREMENT  NOT NULL,
+        file_id      INTEGER                            NOT NULL,
+        server_id    INTEGER                            NOT NULL,
         FOREIGN KEY (file_id) REFERENCES file_structure (id),
         FOREIGN KEY (server_id) REFERENCES servers (id)
     );
