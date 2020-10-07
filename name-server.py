@@ -18,6 +18,7 @@ DATABASE = 'database.db'
 PING_DELAY = 60
 PING_TIMEOUT = 5
 STORAGE_SERVER_MEMORY = 2 ** (8 * 4) # 4GB
+ALLOW_LESS_REPLICAS = True
 
 
 
@@ -166,15 +167,19 @@ def get_servers_for_upload(conn, count = 2, filesize = 0):
 	''', (count,))
 	servers = db_cursor.fetchall()
 
-	# check 'not enough space'
+	# check 'not enough space' #TODO!!!
+	errors = set()
 	if conn != None:
-		if len(servers) != count:
+		if (ALLOW_LESS_REPLICAS and len(servers) == 0) or (not ALLOW_LESS_REPLICAS and len(servers) != count):
 			return_status(conn, 0x23)
 		for server in servers:
 			if STORAGE_SERVER_MEMORY - server[2] < filesize:
-				return_status(conn, 0x23)
+				if ALLOW_LESS_REPLICAS:
+					errors.add(server)
+				else:
+					return_status(conn, 0x23)
 	
-	return servers_from_db_format(servers)
+	return servers_from_db_format(set(servers) - errors)
 
 def get_servers_with_files(conn, login, path, count = None):
 	sql = '''
@@ -191,7 +196,7 @@ def get_servers_with_files(conn, login, path, count = None):
 	servers = db_cursor.fetchall()
 
 	if conn != None:
-		if len(servers) != count:
+		if (ALLOW_LESS_REPLICAS and len(servers) == 0) or (not ALLOW_LESS_REPLICAS and len(servers) != count):
 			return_status(conn, 0x80)
 
 	return servers_from_db_format(servers)
@@ -680,7 +685,8 @@ def handle_storage_server(conn, addr):
 			''', (login, path))
 			row = db_cursor.fetchone()
 			if row == None:
-				storage_server_response(conn, 0x80) # Unknown server error
+				storage_server_response(conn, 0x00) # OK
+				# TODO: if not ALLOW_LESS_REPLICAS: give some error to user?
 			elif row[1] < 2:
 				file_copy(login, path, row[0], path, 1)
 
