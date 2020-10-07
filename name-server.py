@@ -157,14 +157,18 @@ def get_servers_for_upload(count = 2, filesize = 0):
 	# return return 'not enough memory' in these cases
 	return servers
 
-def get_servers_with_files(login, path, count = 1):
-	db_cursor.execute('''
+def get_servers_with_files(login, path, count = None):
+	sql = '''
 		SELECT ip, port
 		FROM servers as s, file_structure as f, files_on_servers as fs
 		WHERE s.id = fs.server_id AND f.id = fs.file_id
 		AND login = ? AND path = ?
-		LIMIT ?
-	''', (login, path, count))
+	'''
+	params = (login, path)
+	if (count != None):
+		sql += 'LIMIT ?'
+		params += (count,)
+	db_cursor.execute(sql, params)
 	return servers_from_db_format(db_cursor.fetchall())
 
 
@@ -278,6 +282,12 @@ def server_create_file(server, login, path):
 def server_delete_file(server, login, path):
 	# TODO: remove from db?
 	return server_eval(server, 'os.remove("%s")' % get_path_on_storage_server(login, path))
+
+def server_move_files(server, login, source, destination):
+	return server_eval(server, 'os.replace("%s", "%s")' % (
+		get_path_on_storage_server(login, source),
+		get_path_on_storage_server(login, destination),
+	))
 
 def server_initialize(server, login, new_user=False):
 	if not new_user:
@@ -485,6 +495,15 @@ def handle_client(conn, addr):
 		destination_len = get_int(conn)
 		source = get_fixed_len_string(conn, source_len)
 		destination = get_fixed_len_string(conn, destination_len)
+
+		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ? AND size IS NOT NULL;", (login, filepath))
+		row = db_cursor.fetchone()
+		if row == None:
+			return_status(conn, 0x21) # File does not exist
+		else:
+			servers = get_servers_with_files(login, source)
+			foreach_storage_server(server_move_files, (login, source, destination), servers = servers)
+			return_status(conn, 0x00) # OK
 
 	elif (id == 0x0B): # directory read
 		login = get_login(conn)
