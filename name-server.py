@@ -103,11 +103,26 @@ def foreach_storage_server(func, additional_params=(), delays=False, servers=Non
 		res = func(server, *additional_params)
 		if not res:
 			storage_servers_list.remove(server)
-			db_cursor.execute('DELETE FROM servers WHERE ip = ? AND port = ?;', (int(ip_address(server[0])), server[1]))
-			db_conn.commit() # TODO: check if ok?
 			errors.add(server)
 			if delays: sleep(PING_DELAY / len(storage_servers_list_copy))
 	if delays: sleep(PING_DELAY / len(storage_servers_list_copy))
+
+	if len(errors) > 0:
+		params = ()
+		for server in errors:
+			params += (int(ip_address(server[0])), server[1])
+		db_cursor.execute('''
+			SELECT login, path, size
+			FROM servers AS s, files_on_servers AS fs, file_structure AS f
+			WHERE fs.file_id = f.id AND fs.server_id = s.id
+			AND (ip, port) IN (VALUES ''' + (', '.join(['(?, ?)']*len(errors))) + ''')
+		''', params)
+		for server in errors:
+			db_cursor.execute('DELETE FROM servers WHERE ip = ? AND port = ?;', (int(ip_address(server[0])), server[1]))
+			db_conn.commit() # TODO: check if ok?
+		for file in db_cursor.fetchall():
+			servers = get_servers_with_files(file[0], file[1], count = 1)
+			file_copy(servers, file[1], file[2])
 
 	return errors
 
@@ -316,6 +331,26 @@ def initialize(conn, login, new_user=False):
 	else:
 		return_status(conn, 0x30)
 
+def file_copy(servers, filename, filesize):
+	destination_servers = get_servers_for_upload(count = len(servers), filesize = filesize)
+	for server_pair in zip(servers, destination_servers):
+		token = token_bytes(16)
+		foreach_storage_server(
+			server_send,
+			(['\x00', token, bytes([len(filename)]), filename.encode('utf-8')],),
+			servers = {server_pair[0]}
+		)
+		foreach_storage_server(
+			server_send,
+			([
+				'\x02', token,
+				int(ip_address(server_pair[0][0])).to_bytes(4, 'big'),
+				bytes([server_pair[0][1]//256, server_pair[0][1]%256, len(filename)]),
+				filename.encode('utf-8')
+			],),
+			servers = {server_pair[1]}
+		)
+
 def handle_client(conn, addr):
 	log('Got connection from client {}'.format(addr))
 	id = get_int(conn)
@@ -451,24 +486,7 @@ def handle_client(conn, addr):
 					# TODO: try to connect to other servers?
 					return_server(conn, server[0], server[1], token)
 				elif (id == 0x09): # file copy
-					destination_servers = get_servers_for_upload(count = len(servers), filesize = row[0])
-					for server_pair in zip(servers, destination_servers):
-						token = token_bytes(16)
-						foreach_storage_server(
-							server_send,
-							(['\x00', token, bytes([len(filename)]), filename.encode('utf-8')],),
-							servers = {server_pair[0]}
-						)
-						foreach_storage_server(
-							server_send,
-							([
-								'\x02', token,
-								int(ip_address(server_pair[0][0])).to_bytes(4, 'big'),
-								bytes([server_pair[0][1]//256, server_pair[0][1]%256, len(filename)]),
-								filename.encode('utf-8')
-							],),
-							servers = {server_pair[1]}
-						)
+					file_copy(servers, filename, row[0])
 					return_status(conn, 0x00) # OK
 				elif (id == 0x0A): # file move
 					foreach_storage_server(server_move_files, (login, source, destination), servers = servers)
@@ -589,7 +607,6 @@ def handle_storage_server(conn, addr):
 		login, _, path = path_on_server.lpartition('/')
 		ip = int(ip_addr(addr[0]))
 
-		# TODO: change in the database
 		if   operation == 0x00: # deleted
 			db_cursor.execute('''
 				DELETE FROM files_on_servers WHERE id IN (
@@ -618,6 +635,8 @@ def handle_storage_server(conn, addr):
 			else:
 				storage_server_response(conn, 0x80) # Unknown server error
 
+		# TODO: replicate file if it is on less than 2 servers
+
 		else:
 			storage_server_response(conn, 0x81) # Wrong request id
 
@@ -639,7 +658,6 @@ def ping_storage_servers():
 				server_ping, 
 				delays = True
 			)
-			# TODO: check dead servers, reupload files
 
 ping_thread = Thread(target = ping_storage_servers)
 ping_thread.start()
