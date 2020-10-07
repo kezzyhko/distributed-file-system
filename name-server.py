@@ -145,6 +145,18 @@ def is_valid_filename(string):
 	# all good
 	return True
 
+def check_and_normalize_path(path, conn, error_code):
+	if error_code != None:
+		if len(path) == 0:
+			return_status(conn, error_code)
+		for part in path.split('/'):
+			if not is_valid_filename(part):
+				return_status(conn, error_code)
+	if len(path) > 0 and path[0] == '/':
+		path = path[1:]
+	return path
+
+
 
 
 # DATABASE FUNCTION
@@ -451,6 +463,7 @@ def handle_client(conn, addr):
 		else:            # file/directory create
 			size = None if (action == 'directory_create') else 0
 			path = get_var_len_string(conn)
+		path = check_and_normalize_path(path, conn, 0x33 if (action == 'directory_create') else 0x24) # Prohibited directory/file name
 		folder, _, filename = path.rpartition('/')
 
 		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ?;", (login, path))
@@ -500,6 +513,8 @@ def handle_client(conn, addr):
 			destination_len = get_int(conn)
 			filepath = get_fixed_len_string(conn, source_len)
 			destination = get_fixed_len_string(conn, destination_len)
+		filepath    = check_and_normalize_path(filepath,    conn, 0x24) # Prohibited file name
+		destination = check_and_normalize_path(destination, conn, 0x24) # Prohibited file name
 
 		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ? AND size IS NOT NULL;", (login, filepath))
 		row = db_cursor.fetchone()
@@ -536,6 +551,7 @@ def handle_client(conn, addr):
 		login = get_login(conn)
 		path = get_var_len_string(conn)
 		deleting_dir = (id == 0x0D)
+		path = check_and_normalize_path(path, conn, 0x33 if deleting_dir else 0x24) # Prohibited directory/file name
 
 		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ?;", (login, path))
 		row = db_cursor.fetchone()
@@ -560,6 +576,7 @@ def handle_client(conn, addr):
 	elif (id == 0x08): # file info
 		login = get_login(conn)
 		filepath = get_var_len_string(conn)
+		filename = check_and_normalize_path(path, conn, 0x24) # Prohibited file name
 		_, _, filename = filepath.rpartition('/')
 
 		db_cursor.execute('''
@@ -579,6 +596,7 @@ def handle_client(conn, addr):
 	elif (id == 0x0B): # directory read
 		login = get_login(conn)
 		dirname = get_var_len_string(conn)
+		dirname = check_and_normalize_path(dirname, conn, None)
 
 		db_cursor.execute("SELECT size FROM file_structure WHERE size IS NULL AND login = ? AND path = ?;", (login, path))
 		row = db_cursor.fetchone()
