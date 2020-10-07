@@ -123,7 +123,7 @@ def is_valid_filename(string):
 			return False
 	
 	# check each prohibited char
-	for c in "\x00\\\"/:*<>|?":
+	for c in "\x00\\\"/:*<>|?\n\r":
 		if c in string:
 			return False
 
@@ -266,7 +266,8 @@ def server_send(server, data):
 		conn.close()
 
 def server_eval(server, cmd):
-	return server_send(server, [b'\x03', bytes([len(cmd)]), cmd.encode('utf-8')])
+	l = len(cmd)
+	return server_send(server, [b'\x03', bytes([l//256, l%256]), cmd.encode('utf-8')])
 
 def server_ping(server):
 	log('Send ping to {}'.format(server))
@@ -438,7 +439,6 @@ def handle_client(conn, addr):
 			if len(servers) == 0:
 				return_status(conn, 0x80) # Unknown server error, but actiually there is not storage servers with this file
 			else:
-				#TODO!!!
 				if (id == 0x05): # file read
 					server = servers.pop()
 					token = token_bytes(16)
@@ -563,12 +563,22 @@ def handle_storage_server(conn, addr):
 
 	elif (id == 0x00): # new storage server
 		port = get_int(conn, 2)
-		storage_servers_list.add((addr[0], port))
+		server = (addr[0], port)
+		storage_servers_list.add(server)
 		db_cursor.execute("INSERT INTO servers (ip, port) VALUES (?, ?)", (int(ip_address(addr[0])), port))
 		if db_cursor.rowcount == 1:
 			db_conn.commit()
-			# TODO: tell full folder structure to storage server
 			storage_server_response(conn, 0x00) # OK
+
+			# send full folder structure to the new server
+			db_cursor.execute("SELECT login, path FROM file_structure WHERE size IS NULL")
+			folders_string = '/files'
+			for row in db_cursor.fetchall():
+				folders_string += '\n'
+				folders_string += get_path_on_storage_server(*row)
+			server_delete_dir(server, '')
+			cmd = '[Path(x).mkdir(parents=True,exist_ok=True) for x in """{}""".split("\\n")]'.format(folders_string)
+			foreach_storage_server(server_eval, (cmd,), servers = {server})
 		else:
 			storage_server_response(conn, 0x80) # Unknown server error
 
