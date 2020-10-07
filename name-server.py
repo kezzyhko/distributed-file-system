@@ -601,7 +601,7 @@ def handle_storage_server(conn, addr):
 
 	elif (id == 0x01): # report
 		operation = get_int(conn)
-		entity_type = get_int(conn) # it is not used, but may be it will be in the future
+		entity_type = get_int(conn)
 		path_on_server = get_var_len_string(conn)
 		login, _, path = path_on_server.lpartition('/')
 		ip = int(ip_addr(addr[0]))
@@ -634,7 +634,19 @@ def handle_storage_server(conn, addr):
 			else:
 				storage_server_response(conn, 0x80) # Unknown server error
 
-		# TODO: replicate file if it is on less than 2 servers
+		if entity_type == 0x00: # file, not directory
+			# replicate file
+			db.execute('''
+				SELECT size, count(server_id)
+				FROM files_on_servers as fs, servers AS s, file_structure AS f
+				WHERE fs.server_id = s.id AND fs.file_id = f.id
+				AND login = ? AND path = ?
+			''', (login, path))
+			row = db_cursor.fetchone()
+			if row == None:
+				storage_server_response(conn, 0x80) # Unknown server error
+			elif row[1] < 2:
+				file_copy(login, path, row[0], path, 1)
 
 		else:
 			storage_server_response(conn, 0x81) # Wrong request id
