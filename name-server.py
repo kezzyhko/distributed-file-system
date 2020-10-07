@@ -567,9 +567,35 @@ def handle_client(conn, addr):
 
 
 
-# HANDLE STORAGE SERVER
+# ADD STORAGE SERVERS FROM DB
 
 storage_servers_list = set()
+
+db_cursor.execute('SELECT ip, port FROM servers;')
+for server in db_cursor.fetchall():
+	storage_servers_list.add((str(ip_address(server[0])), server[1]))
+
+
+
+# CHECK AVAILABILITY OF STORAGE SERVERS
+
+def ping_storage_servers():
+	while True:
+		if len(storage_servers_list) == 0:
+			sleep(PING_DELAY)
+		else:
+			dead_servers = foreach_storage_server(
+				server_ping, 
+				delays = True
+			)
+
+ping_thread = Thread(target = ping_storage_servers)
+ping_thread.start()
+#ping_thread.join()
+
+
+
+# HANDLE STORAGE SERVER
 
 def handle_storage_server(conn, addr):
 	log('Got connection from storage server {}'.format(addr))
@@ -655,24 +681,6 @@ def handle_storage_server(conn, addr):
 		storage_server_response(conn, 0x81)
 
 	log('Thread end')
-
-
-
-# CHECK AVAILABILITY OF STORAGE SERVERS
-
-def ping_storage_servers():
-	while True:
-		if len(storage_servers_list) == 0:
-			sleep(PING_DELAY)
-		else:
-			dead_servers = foreach_storage_server(
-				server_ping, 
-				delays = True
-			)
-
-ping_thread = Thread(target = ping_storage_servers)
-ping_thread.start()
-#ping_thread.join()
 
 
 
