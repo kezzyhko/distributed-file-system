@@ -122,7 +122,7 @@ def foreach_storage_server(func, additional_params=(), delays=False, servers=Non
 			db_cursor.execute('DELETE FROM servers WHERE ip = ? AND port = ?;', (int(ip_address(server[0])), server[1]))
 			db_conn.commit() # TODO: check if ok?
 		for file in db_cursor.fetchall():
-			file_copy(*file, file[1], 1)
+			file_copy_or_replicate(*file, 1)
 
 	return errors
 
@@ -155,16 +155,29 @@ def servers_from_db_format(db_format_servers):
 		servers.add((str(ip_address(row[0])), row[1]))
 	return servers
 
-def get_servers_for_upload(conn, count = 2, filesize = 0):
-	db_cursor.execute('''
+def get_servers_for_upload(conn, count = 2, filesize = 0, exclude_servers_params = ()):
+	params = ()
+	sql = '''
 		SELECT ip, port, COALESCE(sum(size), 0) as mem
 		FROM
 			(servers as s LEFT JOIN files_on_servers as fs ON s.id = fs.server_id)
 			LEFT JOIN file_structure as f ON f.id = fs.file_id
-		GROUP BY ip
+	'''
+	if (exclude_servers_params != ()):
+		sql += '''
+			WHERE server_id NOT IN (
+				SELECT server_id
+				FROM servers as s, file_structure as f, files_on_servers as fs
+				WHERE s.id = fs.server_id AND f.id = fs.file_id
+				AND login = ? AND path = ?
+			)
+		'''
+	sql += '''
+		GROUP BY server_id
 		ORDER BY mem ASC 
 		LIMIT ?
-	''', (count,))
+	'''
+	db_cursor.execute(sql, exclude_servers_params + (count,))
 	servers = db_cursor.fetchall()
 
 	# check 'not enough space' #TODO!!!
@@ -346,9 +359,16 @@ def initialize(conn, login, new_user=False):
 	else:
 		return_status(conn, 0x30)
 
-def file_copy(login, source, filesize, destination, nodes_count, conn = None):
+def file_copy_or_replicate(login, source, filesize, nodes_count, destination = None, conn = None):
 	servers = get_servers_with_files(conn, login, source, count = nodes_count)
-	destination_servers = get_servers_for_upload(conn, count = len(servers), filesize = filesize)
+	destination_servers = get_servers_for_upload(
+		conn,
+		count = len(servers),
+		filesize = filesize,
+		exclude_servers_params = (login, source) if (destination == None) else () # replication
+	)
+	if (destination == None): # replication
+		destination = source
 	for server_pair in zip(servers, destination_servers):
 		token = token_bytes(16)
 		foreach_storage_server(
@@ -499,7 +519,7 @@ def handle_client(conn, addr):
 				# TODO: try to connect to other servers?
 				return_server(conn, server[0], server[1], token)
 			elif (id == 0x09): # file copy
-				file_copy(login, filepath, row[0], destination, 2, conn)
+				file_copy_or_replicate(login, filepath, row[0], 2, destination, conn)
 				return_status(conn, 0x00) # OK
 			elif (id == 0x0A): # file move
 				servers = get_servers_with_files(conn, login, filepath, count = None)
@@ -688,7 +708,7 @@ def handle_storage_server(conn, addr):
 				storage_server_response(conn, 0x00) # OK
 				# TODO: if not ALLOW_LESS_REPLICAS: give some error to user?
 			elif row[1] < 2:
-				file_copy(login, path, row[0], path, 1)
+				file_copy_or_replicate(login, path, row[0], 1)
 
 		else:
 			storage_server_response(conn, 0x81) # Wrong request id
