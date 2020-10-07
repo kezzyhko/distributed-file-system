@@ -1,6 +1,6 @@
 from socket import socket, timeout as socket_error
 from threading import Thread, get_ident
-from sys import stdout
+import sys
 from os import system
 import sqlite3
 from hashlib import pbkdf2_hmac as password_hash
@@ -85,7 +85,7 @@ db_conn.commit()
 
 def log(string):
 	print("%06d | %s" % (get_ident(), string))
-	stdout.flush()
+	sys.stdout.flush()
 
 def get_function_by_addr(addr):
 	if addr[0] == '25.108.175.17':
@@ -198,7 +198,6 @@ def get_login(conn):
 	row = db_cursor.fetchone()
 	if row == None:
 		return_status(conn, 0x15)
-		return None
 	else:
 		return row[0]
 
@@ -214,6 +213,7 @@ def return_status(conn, code, message=''):
 	log('Returned status code %02x with message %s' % (code, message))
 	conn.send(message)
 	conn.close()
+	sys.exit()
 
 def return_token(conn, login):
 	log('Successfull login/registration as "%s"' % login)
@@ -224,6 +224,7 @@ def return_token(conn, login):
 		conn.send(b'\x00')
 		conn.send(token)
 		conn.close()
+		sys.exit()
 	else:
 		return_status(conn, 0x10) # Unknown auth error
 
@@ -236,6 +237,7 @@ def return_server(conn, ip, port, token):
 	conn.send(int(ip).to_bytes(4 if ip.version == 4 else 16, 'big'))
 	conn.send(token)
 	conn.close()
+	sys.exit()
 
 def storage_server_response(conn, code):
 	log('Returned status code %02x' % code)
@@ -610,7 +612,7 @@ def handle_storage_server(conn, addr):
 			storage_server_response(conn, 0x81) # Wrong request id
 
 	else: # unknown id
-		return_status(conn, 0x81)
+		storage_server_response(conn, 0x81)
 
 	log('Thread end')
 
