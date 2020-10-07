@@ -154,7 +154,7 @@ def servers_from_db_format(db_format_servers):
 		servers.add((str(ip_address(row[0])), row[1]))
 	return servers
 
-def get_servers_for_upload(count = 2, filesize = 0):
+def get_servers_for_upload(conn, count = 2, filesize = 0):
 	db_cursor.execute('''
 		SELECT ip, port, COALESCE(sum(size), 0) as mem
 		FROM
@@ -164,12 +164,17 @@ def get_servers_for_upload(count = 2, filesize = 0):
 		ORDER BY mem ASC 
 		LIMIT ?
 	''', (count,))
-	servers = servers_from_db_format(db_cursor.fetchall())
-	# TODO
-	# check if 'servers' are empty
-	# check if STORAGE_SERVER_MEMORY - mem > filesize
-	# return return 'not enough memory' in these cases
-	return servers
+	servers = db_cursor.fetchall()
+
+	# check 'not enough space'
+	if conn != None:
+		if len(servers) != count:
+			return_status(conn, 0x23)
+		for server in servers:
+			if STORAGE_SERVER_MEMORY - server[2] < filesize:
+				return_status(conn, 0x23)
+	
+	return servers_from_db_format(servers)
 
 def get_servers_with_files(login, path, count = None, can_be_zero = False):
 	sql = '''
@@ -331,9 +336,9 @@ def initialize(conn, login, new_user=False):
 	else:
 		return_status(conn, 0x30)
 
-def file_copy(login, source, filesize, destination, nodes_count):
+def file_copy(login, source, filesize, destination, nodes_count, conn = None):
 	servers = get_servers_with_files(login, source, count = nodes_count)
-	destination_servers = get_servers_for_upload(count = len(servers), filesize = filesize)
+	destination_servers = get_servers_for_upload(conn, count = len(servers), filesize = filesize)
 	for server_pair in zip(servers, destination_servers):
 		token = token_bytes(16)
 		foreach_storage_server(
@@ -437,11 +442,11 @@ def handle_client(conn, addr):
 						foreach_storage_server(server_create_dir, (login, path))
 						return_status(conn, 0x00)
 					elif (action == 'file_create'):
-						foreach_storage_server(server_create_file, (login, path), servers = get_servers_for_upload(count = 2))
+						foreach_storage_server(server_create_file, (login, path), servers = get_servers_for_upload(conn, count = 2))
 						return_status(conn, 0x00)
 					elif (action == 'file_write'):
 						token = token_bytes(16)
-						servers = get_servers_for_upload(count = 1, filesize = size)
+						servers = get_servers_for_upload(conn, count = 1, filesize = size)
 						path_on_server = get_path_on_storage_server(login, path)
 						foreach_storage_server(
 							server_send,
@@ -484,7 +489,7 @@ def handle_client(conn, addr):
 				# TODO: try to connect to other servers?
 				return_server(conn, server[0], server[1], token)
 			elif (id == 0x09): # file copy
-				file_copy(login, filepath, row[0], destination, 2)
+				file_copy(login, filepath, row[0], destination, 2, conn)
 				return_status(conn, 0x00) # OK
 			elif (id == 0x0A): # file move
 				servers = get_servers_with_files(login, filepath, count = None)
