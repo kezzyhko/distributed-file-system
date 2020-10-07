@@ -267,17 +267,17 @@ def server_ping(server):
 	return server_send(server, [b'\x04'])
 
 def server_create_dir(server, login, path=''):
-	return server_eval(server, "os.makedirs('%s')" % get_path_on_storage_server(login, path))
+	return server_eval(server, 'os.makedirs("%s")' % get_path_on_storage_server(login, path))
 
 def server_delete_dir(server, login, path=''):
-	return server_eval(server, "rmtree('%s')" % get_path_on_storage_server(login, path))
+	return server_eval(server, 'rmtree("%s")' % get_path_on_storage_server(login, path))
 
 def server_create_file(server, login, path):
-	return server_eval(server, "open('%s', 'a').close()" % get_path_on_storage_server(login, path))
+	return server_eval(server, 'open("%s", "a").close()' % get_path_on_storage_server(login, path))
 
 def server_delete_file(server, login, path):
 	# TODO: remove from db?
-	return server_eval(server, "os.remove('%s')" % get_path_on_storage_server(login, path))
+	return server_eval(server, 'os.remove("%s")' % get_path_on_storage_server(login, path))
 
 def server_initialize(server, login, new_user=False):
 	if not new_user:
