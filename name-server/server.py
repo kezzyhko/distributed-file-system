@@ -6,7 +6,7 @@ import sqlite3
 from hashlib import pbkdf2_hmac as password_hash
 from secrets import token_bytes, token_hex
 from time import sleep
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_network
 
 
 
@@ -19,6 +19,7 @@ PING_DELAY = 60
 PING_TIMEOUT = 5
 STORAGE_SERVER_MEMORY = 2 ** (8 * 4) # 4GB
 ALLOW_LESS_REPLICAS = True
+STORAGE_SERVERS_NETWORK = ip_network('25.72.0.0/13')
 
 
 
@@ -91,7 +92,7 @@ def log(string):
 	sys.stdout.flush()
 
 def get_function_by_addr(addr):
-	if addr[0] == '25.108.175.17':
+	if ip_address(addr[0]) in STORAGE_SERVERS_NETWORK:
 		return handle_storage_server
 	else:
 		return handle_client
@@ -310,9 +311,9 @@ def server_send(server, data):
 		conn.settimeout(PING_TIMEOUT)
 		conn.connect(server)
 		for d in data:
-			log("Sending {}".format(d))
+			#log("Sending {}".format(d))
 			conn.send(d)
-			log("Sent {}".format(d))
+			#log("Sent {}".format(d))
 		return (get_int(conn) == 0)
 	except socket_error as e: 
 		log('Could not connect to {}'.format(server))
@@ -694,6 +695,8 @@ def handle_storage_server(conn, addr):
 		login, _, path = path_on_server.partition('/')
 		ip = int(ip_address(addr[0]))
 
+		log("Got report from storage server {}: {}".format(addr, path_on_server))
+
 		if   operation == 0x00: # deleted
 			db_cursor.execute('''
 				DELETE FROM files_on_servers WHERE id IN (
@@ -723,6 +726,7 @@ def handle_storage_server(conn, addr):
 				storage_server_response(conn, 0x80) # Unknown server error
 
 		if entity_type == 0x00: # file, not directory
+			log("Started replicating")
 			# replicate file
 			db_cursor.execute('''
 				SELECT size, count(server_id)
@@ -734,6 +738,7 @@ def handle_storage_server(conn, addr):
 			if row == None:
 				storage_server_response(conn, 0x00) # OK
 				# TODO: if not ALLOW_LESS_REPLICAS: give some error to user?
+				log("Did not found server to replicate to")
 			elif row[1] < 2:
 				file_copy_or_replicate(login, path, row[0], 1)
 
