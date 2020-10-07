@@ -29,6 +29,8 @@ db_conn = sqlite3.connect(
 ) 
 db_cursor = db_conn.cursor()
 
+db_cursor.execute('PRAGMA foreign_keys = ON;')
+
 db_cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         id           INTEGER PRIMARY KEY AUTOINCREMENT  NOT NULL,
@@ -72,8 +74,8 @@ db_cursor.execute('''
         id           INTEGER PRIMARY KEY AUTOINCREMENT  NOT NULL,
         file_id      INTEGER                            NOT NULL,
         server_id    INTEGER                            NOT NULL,
-        FOREIGN KEY (file_id) REFERENCES file_structure (id),
-        FOREIGN KEY (server_id) REFERENCES servers (id)
+        FOREIGN KEY (file_id)   REFERENCES file_structure (id) ON DELETE CASCADE,
+        FOREIGN KEY (server_id) REFERENCES servers (id)        ON DELETE CASCADE
     );
 ''')
 
@@ -101,7 +103,8 @@ def foreach_storage_server(func, additional_params=(), delays=False, servers=Non
 		res = func(server, *additional_params)
 		if not res:
 			storage_servers_list.remove(server)
-			# TODO: remove from db
+			db_cursor.execute('DELETE FROM servers WHERE ip = ? AND port = ?;', (int(ip_address(server[0])), server[1]))
+			db_conn.commit() # TODO: check if ok?
 			errors.add(server)
 			if delays: sleep(PING_DELAY / len(storage_servers_list_copy))
 	if delays: sleep(PING_DELAY / len(storage_servers_list_copy))
