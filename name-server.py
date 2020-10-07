@@ -524,14 +524,19 @@ def handle_client(conn, addr):
 		login = get_login(conn)
 		dirname = get_var_len_string(conn)
 
-		db_cursor.execute("SELECT path, size FROM file_structure WHERE login = ? AND path REGEXP ?;", (login, '^%s\\/[^\\/]*$' % filepath))
-		directory_list = db_cursor.fetchall()
+		db_cursor.execute("SELECT size FROM file_structure WHERE size IS NULL AND login = ? AND path = ?;", (login, path))
+		row = db_cursor.fetchone()
+		if row == None:
+			return_status(conn, 0x31) # Directory does not exist
+		else:
+			db_cursor.execute("SELECT path, size FROM file_structure WHERE login = ? AND path REGEXP ?;", (login, '^%s\\/[^\\/]*$' % filepath))
+			directory_list = db_cursor.fetchall()
 
-		msg = ("total %d\r\n" % len(directory_list))
-		for entity in directory_list:
-			msg += ("%c %s\r\n" % ('d' if entity[1] == None else 'f', entity[0]))
+			msg = ("total %d\r\n" % len(directory_list))
+			for entity in directory_list:
+				msg += ("%c %s\r\n" % ('d' if entity[1] == None else 'f', entity[0]))
 
-		return_status(conn, 0x00, msg)
+			return_status(conn, 0x00, msg)
 
 	#     id == 0x0C   # look above
 	#     id == 0x0D   # look above
