@@ -1,6 +1,6 @@
 # distributed-file-system
 
-This project implements a simple Distributed File System (DFS). It is a service, where user can store his files, which will allocated in several services, and, in case of falling one of it, user will still have an opportunity to get his files. Also, this system is well-scalable: you can endlessly run new storage servers and system will automatically expanded. Our project has an [offitial wiki](https://github.com/kezzyhko/distributed-file-system/wiki), look it, it is interesting. :)
+This project implements a simple Distributed File System (DFS). It is a service, where user can store his files, which will allocated in several services, and, in case of falling one of it, user will still have an opportunity to get his files. Also, this system is well-scalable: you can endlessly run new storage servers and system will automatically expanded. Our project has an [official wiki](https://github.com/kezzyhko/distributed-file-system/wiki), look it, it is interesting. :)
 
 # Installation
 
@@ -17,7 +17,7 @@ and
 docker pull bogotolec/dfs-storage-server
 docker run -p 6666:666 --name storage-server -it bogotolec/dfs-storage-server
 ```
-You can see more variants of installation and configuration on our [offitial wiki](https://github.com/kezzyhko/distributed-file-system/wiki/Servers-installation)
+You can see more variants of installation and configuration on our [official wiki](https://github.com/kezzyhko/distributed-file-system/wiki/Servers-installation)
 
 # Protocols
 
