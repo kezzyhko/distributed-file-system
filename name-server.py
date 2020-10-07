@@ -449,10 +449,25 @@ def handle_client(conn, addr):
 					# TODO: try to connect to other servers?
 					return_server(conn, server[0], server[1], token)
 				elif (id == 0x09): # file copy
-					destination_servers = get_servers_for_upload(count = 2, filesize = row[0])
-					# TODO!!!
-					# send comands to send the file
-					# send comands to receive the file
+					destination_servers = get_servers_for_upload(count = len(servers), filesize = row[0])
+					for server_pair in zip(servers, destination_servers):
+						token = token_bytes(16)
+						foreach_storage_server(
+							server_send,
+							(['\x00', token, bytes([len(filename)]), filename.encode('utf-8')],),
+							servers = {server_pair[0]}
+						)
+						foreach_storage_server(
+							server_send,
+							([
+								'\x02', token,
+								int(ip_address(server_pair[0][0])).to_bytes(4, 'big'),
+								bytes([server_pair[0][1]//256, server_pair[0][1]%256, len(filename)]),
+								filename.encode('utf-8')
+							],),
+							servers = {server_pair[1]}
+						)
+					return_status(conn, 0x00) # OK
 				elif (id == 0x0A): # file move
 					foreach_storage_server(server_move_files, (login, source, destination), servers = servers)
 					return_status(conn, 0x00) # OK
