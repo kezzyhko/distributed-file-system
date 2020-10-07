@@ -121,8 +121,7 @@ def foreach_storage_server(func, additional_params=(), delays=False, servers=Non
 			db_cursor.execute('DELETE FROM servers WHERE ip = ? AND port = ?;', (int(ip_address(server[0])), server[1]))
 			db_conn.commit() # TODO: check if ok?
 		for file in db_cursor.fetchall():
-			servers = get_servers_with_files(file[0], file[1], count = 1)
-			file_copy(servers, file[1], file[2])
+			file_copy(*file, file[1], 1)
 
 	return errors
 
@@ -172,7 +171,7 @@ def get_servers_for_upload(count = 2, filesize = 0):
 	# return return 'not enough memory' in these cases
 	return servers
 
-def get_servers_with_files(login, path, count = None):
+def get_servers_with_files(login, path, count = None, can_be_zero = False):
 	sql = '''
 		SELECT ip, port
 		FROM servers as s, file_structure as f, files_on_servers as fs
@@ -184,6 +183,7 @@ def get_servers_with_files(login, path, count = None):
 		sql += 'LIMIT ?'
 		params += (count,)
 	db_cursor.execute(sql, params)
+	# TODO: check that it is not empty if can_be_zero = False
 	return servers_from_db_format(db_cursor.fetchall())
 
 
@@ -331,13 +331,14 @@ def initialize(conn, login, new_user=False):
 	else:
 		return_status(conn, 0x30)
 
-def file_copy(servers, filename, filesize):
+def file_copy(login, source, filesize, destination, nodes_count):
+	servers = get_servers_with_files(login, source, count = nodes_count)
 	destination_servers = get_servers_for_upload(count = len(servers), filesize = filesize)
 	for server_pair in zip(servers, destination_servers):
 		token = token_bytes(16)
 		foreach_storage_server(
 			server_send,
-			(['\x00', token, bytes([len(filename)]), filename.encode('utf-8')],),
+			(['\x00', token, bytes([len(source)]), source.encode('utf-8')],),
 			servers = {server_pair[0]}
 		)
 		foreach_storage_server(
@@ -345,8 +346,8 @@ def file_copy(servers, filename, filesize):
 			([
 				'\x02', token,
 				int(ip_address(server_pair[0][0])).to_bytes(4, 'big'),
-				bytes([server_pair[0][1]//256, server_pair[0][1]%256, len(filename)]),
-				filename.encode('utf-8')
+				bytes([server_pair[0][1]//256, server_pair[0][1]%256, len(destination)]),
+				destination.encode('utf-8')
 			],),
 			servers = {server_pair[1]}
 		)
@@ -470,29 +471,27 @@ def handle_client(conn, addr):
 		if row == None:
 			return_status(conn, 0x21) # File does not exist
 		else:
-			servers = get_servers_with_files(login, filepath, count = {0x05: 1, 0x09: 2, 0x0A: None}[id])
-			if len(servers) == 0:
-				return_status(conn, 0x80) # Unknown server error, but actiually there is not storage servers with this file
+			if (id == 0x05): # file read
+				servers = get_servers_with_files(login, filepath, count = 1)
+				server = servers.pop()
+				token = token_bytes(16)
+				foreach_storage_server(
+					server_send,
+					(['\x00', token, bytes([len(filename)]), filename.encode('utf-8')],),
+					servers = servers
+				)
+				# TODO: check that it was ok?
+				# TODO: try to connect to other servers?
+				return_server(conn, server[0], server[1], token)
+			elif (id == 0x09): # file copy
+				file_copy(login, filepath, row[0], destination, 2)
+				return_status(conn, 0x00) # OK
+			elif (id == 0x0A): # file move
+				servers = get_servers_with_files(login, filepath, count = None)
+				foreach_storage_server(server_move_files, (login, source, destination), servers = servers)
+				return_status(conn, 0x00) # OK
 			else:
-				if (id == 0x05): # file read
-					server = servers.pop()
-					token = token_bytes(16)
-					foreach_storage_server(
-						server_send,
-						(['\x00', token, bytes([len(filename)]), filename.encode('utf-8')],),
-						servers = servers
-					)
-					# TODO: check that it was ok?
-					# TODO: try to connect to other servers?
-					return_server(conn, server[0], server[1], token)
-				elif (id == 0x09): # file copy
-					file_copy(servers, filename, row[0])
-					return_status(conn, 0x00) # OK
-				elif (id == 0x0A): # file move
-					foreach_storage_server(server_move_files, (login, source, destination), servers = servers)
-					return_status(conn, 0x00) # OK
-				else:
-					return_status(conn, 0x80) # Unknown error
+				return_status(conn, 0x80) # Unknown error
 
 	#     id == 0x06   # look above
 
@@ -513,7 +512,7 @@ def handle_client(conn, addr):
 				if deleting_dir:
 					foreach_storage_server(server_delete_dir, (login, path))
 				else:
-					servers = get_servers_with_files(login, path)
+					servers = get_servers_with_files(login, path, can_be_zero = True)
 					foreach_storage_server(server_delete_file, servers = servers)
 					
 				return_status(conn, 0x00)
