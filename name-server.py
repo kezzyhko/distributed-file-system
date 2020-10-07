@@ -13,7 +13,7 @@ from ipaddress import ip_address
 # CONSTANTS
 
 PORT = 1234
-ROOT_FOLDER = '/files/'
+ROOT_FOLDER = '/files'
 DATABASE = 'database.db'
 PING_DELAY = 60
 PING_TIMEOUT = 5
@@ -109,10 +109,7 @@ def foreach_storage_server(func, additional_params=(), delays=False, servers=Non
 	return errors
 
 def get_path_on_storage_server(login, path=''):
-	if path == '':
-		return '%s%s' % (ROOT_FOLDER, login)
-	else:
-		return '%s%s/%s' % (ROOT_FOLDER, login, path)
+	return '/'.join(filter(None, [ROOT_FOLDER, login, path]))
 
 def is_valid_filename(string):
 	# check special conditions
