@@ -176,7 +176,7 @@ def get_servers_for_upload(conn, count = 2, filesize = 0):
 	
 	return servers_from_db_format(servers)
 
-def get_servers_with_files(login, path, count = None, can_be_zero = False):
+def get_servers_with_files(conn, login, path, count = None):
 	sql = '''
 		SELECT ip, port
 		FROM servers as s, file_structure as f, files_on_servers as fs
@@ -188,8 +188,13 @@ def get_servers_with_files(login, path, count = None, can_be_zero = False):
 		sql += 'LIMIT ?'
 		params += (count,)
 	db_cursor.execute(sql, params)
-	# TODO: check that it is not empty if can_be_zero = False
-	return servers_from_db_format(db_cursor.fetchall())
+	servers = db_cursor.fetchall()
+
+	if conn != None:
+		if len(servers) != count:
+			return_status(conn, 0x80)
+
+	return servers_from_db_format(servers)
 
 
 
@@ -337,7 +342,7 @@ def initialize(conn, login, new_user=False):
 		return_status(conn, 0x30)
 
 def file_copy(login, source, filesize, destination, nodes_count, conn = None):
-	servers = get_servers_with_files(login, source, count = nodes_count)
+	servers = get_servers_with_files(conn, login, source, count = nodes_count)
 	destination_servers = get_servers_for_upload(conn, count = len(servers), filesize = filesize)
 	for server_pair in zip(servers, destination_servers):
 		token = token_bytes(16)
@@ -477,7 +482,7 @@ def handle_client(conn, addr):
 			return_status(conn, 0x21) # File does not exist
 		else:
 			if (id == 0x05): # file read
-				servers = get_servers_with_files(login, filepath, count = 1)
+				servers = get_servers_with_files(conn, login, filepath, count = 1)
 				server = servers.pop()
 				token = token_bytes(16)
 				foreach_storage_server(
@@ -492,7 +497,7 @@ def handle_client(conn, addr):
 				file_copy(login, filepath, row[0], destination, 2, conn)
 				return_status(conn, 0x00) # OK
 			elif (id == 0x0A): # file move
-				servers = get_servers_with_files(login, filepath, count = None)
+				servers = get_servers_with_files(conn, login, filepath, count = None)
 				foreach_storage_server(server_move_files, (login, source, destination), servers = servers)
 				return_status(conn, 0x00) # OK
 			else:
@@ -517,7 +522,7 @@ def handle_client(conn, addr):
 				if deleting_dir:
 					foreach_storage_server(server_delete_dir, (login, path))
 				else:
-					servers = get_servers_with_files(login, path, can_be_zero = True)
+					servers = get_servers_with_files(None, login, path)
 					foreach_storage_server(server_delete_file, servers = servers)
 					
 				return_status(conn, 0x00)
