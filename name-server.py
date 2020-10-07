@@ -417,27 +417,47 @@ def handle_client(conn, addr):
 				else:
 					return_status(conn, 0x30 if (action == 'directory_create') else 0x20) # Unknown directory/file error
 
-	elif (id == 0x05): # file read
+	elif (id == 0x05 or id == 0x09 or id == 0x0A): # file read / file copy / file move
 		login = get_login(conn)
-		filepath = get_var_len_string(conn)
+		if (id == 0x05): # file read
+			filepath = get_var_len_string(conn)
+		else:
+			source_len = get_int(conn)
+			destination_len = get_int(conn)
+			filepath = get_fixed_len_string(conn, source_len)
+			destination = get_fixed_len_string(conn, destination_len)
 
 		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ? AND size IS NOT NULL;", (login, filepath))
 		row = db_cursor.fetchone()
 		if row == None:
 			return_status(conn, 0x21) # File does not exist
 		else:
-			servers = get_servers_with_files(login, filepath, count = 1)
+			servers = get_servers_with_files(login, filepath, count = {0x05: 1, 0x09: 2, 0x0A: None}[id])
 			if len(servers) == 0:
 				return_status(conn, 0x80) # Unknown server error, but actiually there is not storage servers with this file
 			else:
-				server = servers.pop()
-				token = token_bytes(16)
-				res = server_send(server, ['\x00', token, bytes([len(filename)]), filename.encode('utf-8')])
-				if not res:
-					return_status(conn, 0x80) # Unknown server error, but actually we just could not connect to the server with the file
-					# TODO: try to connect to other servers
-				else:
+				#TODO!!!
+				if (id == 0x05): # file read
+					server = servers.pop()
+					token = token_bytes(16)
+					foreach_storage_server(
+						server_send,
+						(['\x00', token, bytes([len(filename)]), filename.encode('utf-8')],),
+						servers = servers
+					)
+					# TODO: check that it was ok?
+					# TODO: try to connect to other servers?
 					return_server(conn, server[0], server[1], token)
+				elif (id == 0x09): # file copy
+					destination_servers = get_servers_for_upload(count = 2, filesize = row[0])
+					# TODO!!!
+					# send comands to send the file
+					# send comands to receive the file
+				elif (id == 0x0A): # file move
+					foreach_storage_server(server_move_files, (login, source, destination), servers = servers)
+					return_status(conn, 0x00) # OK
+				else:
+					return_status(conn, 0x80) # Unknown error
 
 	#     id == 0x06   # look above
 
@@ -482,28 +502,8 @@ def handle_client(conn, addr):
 		else:
 			return_status(conn, 0x00, ("%d %d %s " % row) + filename)
 
-	elif (id == 0x09): # file copy
-		login = get_login(conn)
-		source_len = get_int(conn)
-		destination_len = get_int(conn)
-		source = get_fixed_len_string(conn, source_len)
-		destination = get_fixed_len_string(conn, destination_len)
-
-	elif (id == 0x0A): # file move
-		login = get_login(conn)
-		source_len = get_int(conn)
-		destination_len = get_int(conn)
-		source = get_fixed_len_string(conn, source_len)
-		destination = get_fixed_len_string(conn, destination_len)
-
-		db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ? AND size IS NOT NULL;", (login, filepath))
-		row = db_cursor.fetchone()
-		if row == None:
-			return_status(conn, 0x21) # File does not exist
-		else:
-			servers = get_servers_with_files(login, source)
-			foreach_storage_server(server_move_files, (login, source, destination), servers = servers)
-			return_status(conn, 0x00) # OK
+	#     id == 0x09   # look above
+	#     id == 0x0A   # look above
 
 	elif (id == 0x0B): # directory read
 		login = get_login(conn)
