@@ -510,14 +510,16 @@ def handle_client(conn, addr):
 				servers = get_servers_with_files(conn, login, filepath, count = 1)
 				server = servers.pop()
 				token = token_bytes(16)
-				foreach_storage_server(
+				errors = foreach_storage_server(
 					server_send,
-					(['\x00', token, bytes([len(filename)]), filename.encode('utf-8')],),
-					servers = servers
+					(['\x00', token, bytes([len(filepath)]), filepath.encode('utf-8')],),
+					servers = {server}
 				)
-				# TODO: check that it was ok?
-				# TODO: try to connect to other servers?
-				return_server(conn, server[0], server[1], token)
+				if (len(errors) != 0):
+					return_status(0x80)
+					# TODO: try to connect to other servers?
+				else:
+					return_server(conn, server[0], server[1], token)
 			elif (id == 0x09): # file copy
 				file_copy_or_replicate(login, filepath, row[0], 2, destination, conn)
 				return_status(conn, 0x00) # OK
