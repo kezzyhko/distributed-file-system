@@ -7,19 +7,32 @@ from hashlib import pbkdf2_hmac as password_hash
 from secrets import token_bytes, token_hex
 from time import sleep
 from ipaddress import ip_address, ip_network
+from distutils.util import strtobool
 
 
 
 # CONSTANTS
 
-PORT = 1234
-ROOT_FOLDER = '/files'
-DATABASE = 'database.db'
-PING_DELAY = 60
-PING_TIMEOUT = 5
-STORAGE_SERVER_MEMORY = 2 ** (8 * 4) # 4GB
-ALLOW_LESS_REPLICAS = True
-STORAGE_SERVERS_NETWORK = ip_network('25.72.0.0/13')
+def parse_config(filename = 'config'):
+
+	result = dict()
+
+	with open(filename, "r") as f:
+		for line in f:
+			key, value = line.replace('\n', '').split('=')
+			result[key] = value 
+
+	return result
+
+_d = parse_config()
+PORT = int(_d['PORT'])
+ROOT_FOLDER = _d['ROOT_FOLDER']
+DATABASE = _d['DATABASE']
+PING_DELAY = int(_d['PING_DELAY'])
+PING_TIMEOUT = int(_d['PING_TIMEOUT'])
+STORAGE_SERVER_MEMORY = int(_d['STORAGE_SERVER_MEMORY'])
+STORAGE_SERVERS_NETWORK = ip_network(_d['STORAGE_SERVERS_NETWORK'])
+ALLOW_LESS_REPLICAS = bool(strtobool(_d['ALLOW_LESS_REPLICAS']))
 
 
 
