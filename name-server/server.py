@@ -1,4 +1,4 @@
-from socket import socket, timeout as socket_error
+from socket import socket, error as socket_error
 from threading import Thread, get_ident
 import sys
 from os import system
@@ -59,7 +59,7 @@ db_cursor.execute('''
         size         INTEGER(4),
         created_on   DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
         FOREIGN KEY (login) REFERENCES users (login),
-        UNIQUE (path, size)
+        UNIQUE (login, path)
     );
 ''')
 
@@ -113,17 +113,20 @@ def foreach_storage_server(func, additional_params=(), delays=False, servers=Non
 		params = ()
 		for server in errors:
 			params += (int(ip_address(server[0])), server[1])
+			log("There was problem with server {}".format(server))
 		db_cursor.execute('''
 			SELECT login, path, size
 			FROM servers AS s, files_on_servers AS fs, file_structure AS f
 			WHERE fs.file_id = f.id AND fs.server_id = s.id
 			AND (ip, port) IN (VALUES ''' + (', '.join(['(?, ?)']*len(errors))) + ''')
 		''', params)
+		dead_files = db_cursor.fetchall()
+		log("Files from dead server: {}".format(dead_files))
 		for server in errors:
 			db_cursor.execute('DELETE FROM servers WHERE ip = ? AND port = ?;', (int(ip_address(server[0])), server[1]))
 			db_conn.commit() # TODO: check if ok?
-		for file in db_cursor.fetchall():
-			file_copy_or_replicate(*file, 1)
+		for file in dead_files:
+			file_copy_or_replicate(*file)
 
 	return errors
 
@@ -193,7 +196,7 @@ def get_servers_for_upload(conn, count = 2, filesize = 0, exclude_servers_params
 	db_cursor.execute(sql, exclude_servers_params + (count,))
 	servers = db_cursor.fetchall()
 
-	# check 'not enough space' #TODO!!!
+	# check 'not enough space'
 	errors = set()
 	if conn != None:
 		if (ALLOW_LESS_REPLICAS and len(servers) == 0) or (not ALLOW_LESS_REPLICAS and len(servers) != count):
@@ -336,10 +339,16 @@ def server_delete_dir(server, login, path=''):
 	return server_eval(server, 'rmtree("%s")' % get_path_on_storage_server(login, path))
 
 def server_create_file(server, login, path):
-    return server_eval(server, 'Path("%s").touch(exist_ok=True)' % get_path_on_storage_server(login, path))
+	db_cursor.execute('''
+		INSERT INTO files_on_servers (server_id, file_id) VALUES (
+			(SELECT id FROM servers WHERE ip = ? AND port = ?),
+			(SELECT id FROM file_structure WHERE login = ? AND path = ?)
+		);
+	''', (int(ip_address(server[0])), server[1], login, path)) 
+	db_conn.commit() # TODO: check if it was ok?
+	return server_eval(server, 'Path("%s").touch(exist_ok=True)' % get_path_on_storage_server(login, path))
 
 def server_delete_file(server, login, path):
-	# TODO: remove from db?
 	return server_eval(server, 'os.remove("%s")' % get_path_on_storage_server(login, path))
 
 def server_move_files(server, login, source, destination):
@@ -367,12 +376,12 @@ def initialize(conn, login, new_user=False):
 		foreach_storage_server(server_initialize, (login, new_user))
 		if new_user:
 			return_token(conn, login)
-		else:
+		else: 
 			return_status(conn, 0x00)
 	else:
 		return_status(conn, 0x30)
 
-def file_copy_or_replicate(login, source, filesize, nodes_count, destination = None, conn = None):
+def file_copy_or_replicate(login, source, filesize, destination = None, conn = None, nodes_count = 1):
 	servers = get_servers_with_files(conn, login, source, count = nodes_count)
 	destination_servers = get_servers_for_upload(
 		conn,
@@ -381,28 +390,39 @@ def file_copy_or_replicate(login, source, filesize, nodes_count, destination = N
 		exclude_servers_params = (login, source) if (destination == None) else () # replication
 	)
 	if (destination == None): # replication
+		log("Replicating file {}".format(source))
 		destination = source
+	else:
+		log("Copying file {} to {}".format(source, destination))
+	log("Source servers: {}".format(servers))
+	log("Destination servers: {}".format(destination_servers))
 	for server_pair in zip(servers, destination_servers):
 		token = token_bytes(16)
-		foreach_storage_server(
+		source_full_path = get_path_on_storage_server(login, source)
+		errors = foreach_storage_server(
 			server_send,
-			([b'\x00', token, bytes([len(source)]), source.encode('utf-8')],),
+			([b'\x00', token, bytes([len(source_full_path)]), source_full_path.encode('utf-8')],),
 			servers = {server_pair[0]}
 		)
-		foreach_storage_server(
-			server_send,
-			([
-				b'\x02', token,
-				int(ip_address(server_pair[0][0])).to_bytes(4, 'big'),
-				bytes([server_pair[0][1]//256, server_pair[0][1]%256, len(destination)]),
-				destination.encode('utf-8')
-			],),
-			servers = {server_pair[1]}
-		)
+		if (len(errors) == 0):
+			destination_full_path = get_path_on_storage_server(login, destination)
+			foreach_storage_server(
+				server_send,
+				([
+					b'\x02', token,
+					int(ip_address(server_pair[0][0])).to_bytes(4, 'big'),
+					bytes([server_pair[0][1]//256, server_pair[0][1]%256, len(destination_full_path)]),
+					destination_full_path.encode('utf-8')
+				],),
+				servers = {server_pair[1]}
+			)
+		else:
+			pass # TODO: check ALLOW_LESS_REPLICAS
 
 def handle_client(conn, addr):
 	log('Got connection from client {}'.format(addr))
 	id = get_int(conn)
+	log("Request id = %d" % id)
 
 	if   (id == 0x00): # logout
 		token = get_data(conn, 32)
@@ -479,8 +499,9 @@ def handle_client(conn, addr):
 				return_status(conn, 0x33 if (action == 'directory_create') else 0x24) # Prohibited directory/file name
 			else:
 				# finally, creating file/directory
-				# TODO: fix adding file/dir to the database and then getting error
+				log("Got request to create (%s) %s %s" % (action, login, path))
 				db_cursor.execute("INSERT INTO file_structure (login, path, size) VALUES (?, ?, ?);", (login, path, size))
+				db_conn.commit() # TODO: fix adding file/dir to the database and then getting error
 				if db_cursor.rowcount == 1:
 					if (action == 'directory_create'):
 						foreach_storage_server(server_create_dir, (login, path))
@@ -537,15 +558,34 @@ def handle_client(conn, addr):
 					# TODO: try to connect to other servers?
 				else:
 					return_server(conn, server[0], server[1], token)
-			elif (id == 0x09): # file copy
-				file_copy_or_replicate(login, filepath, row[0], 2, destination, conn)
-				return_status(conn, 0x00) # OK
-			elif (id == 0x0A): # file move
-				servers = get_servers_with_files(conn, login, filepath, count = None)
-				foreach_storage_server(server_move_files, (login, source, destination), servers = servers)
-				return_status(conn, 0x00) # OK
 			else:
-				return_status(conn, 0x80) # Unknown error
+				folder, _, _ = destination.rpartition('/')
+				db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ? AND size IS NULL;", (login, folder))
+				row2 = db_cursor.fetchone()
+				if row2 == None:
+					log("Folder {} does not exist".format(folder))
+					return_status(conn, 0x31) # Directory does not exist
+				else:
+					db_cursor.execute("SELECT size FROM file_structure WHERE login = ? AND path = ? AND size IS NOT NULL;", (login, destination))
+					row2 = db_cursor.fetchone()
+					if row2 != None:
+						return_status(conn, 0x32 if row2[0] != None else 0x22) # Directory/File already exists
+					else:
+						if   (id == 0x09): # file copy
+							db_cursor.execute("INSERT INTO file_structure (login, path, size) VALUES (?, ?, ?);", (login, destination, row[0]))
+							file_copy_or_replicate(login, filepath, row[0], destination, conn)
+							db_conn.commit() # TODO: check if previous line worked?
+							return_status(conn, 0x00) # OK
+						elif (id == 0x0A): # file move
+								servers = get_servers_with_files(conn, login, filepath, count = None)
+								foreach_storage_server(server_move_files, (login, filepath, destination), servers = servers)
+								db_cursor.execute('''
+									UPDATE file_structure
+									SET path = ?
+									WHERE login = ? AND path = ?;
+								''', (destination, login, filepath))
+								db_conn.commit() # TODO: check if previous lines worked?
+								return_status(conn, 0x00) # OK
 
 	#     id == 0x06   # look above
 
@@ -561,18 +601,18 @@ def handle_client(conn, addr):
 			return_status(conn, 0x31 if deleting_dir else 0x21) # Directory/File does not exist
 		else:
 			# finally, deleting file/directory
-			db_cursor.execute("DELETE FROM file_structure WHERE login = ? AND path = ?;", (login, path))
-			if db_cursor.rowcount == 1:
-				db_conn.commit()
-				if deleting_dir:
-					foreach_storage_server(server_delete_dir, (login, path))
-				else:
-					servers = get_servers_with_files(None, login, path)
-					foreach_storage_server(server_delete_file, servers = servers)
-					
-				return_status(conn, 0x00)
+			log("Got request to delete %s %s" % (login, path))
+			if deleting_dir:
+				db_cursor.execute("DELETE FROM file_structure WHERE login = ? AND path LIKE ?;", (login, path+"/%"))
+				db_conn.commit() # TODO: check ok?
+				errors = foreach_storage_server(server_delete_dir, (login, path))
 			else:
-				return_status(conn, 0x30 if deleting_dir else 0x20) # Unknown directory/file error
+				servers = get_servers_with_files(conn, login, path)
+				errors = foreach_storage_server(server_delete_file, (login, path), servers = servers)
+			db_cursor.execute("DELETE FROM file_structure WHERE login = ? AND path = ?;", (login, path))
+			db_conn.commit() # TODO: check?
+					
+			return_status(conn, 0x00 if len(errors) == 0 else (0x30 if deleting_dir else 0x20))
 
 
 	elif (id == 0x08): # file info
@@ -664,12 +704,10 @@ def handle_storage_server(conn, addr):
 	log('Got connection from storage server {}'.format(addr))
 	id = get_int(conn)
 
-	if False: # for aligning conditions below
-		pass
-
-	elif (id == 0x00): # new storage server
+	if   (id == 0x00): # new storage server
 		port = get_int(conn, 2)
 		server = (addr[0], port)
+		log("New storage server {}".format(server))
 		storage_servers_list.add(server)
 		db_cursor.execute("INSERT INTO servers (ip, port) VALUES (?, ?)", (int(ip_address(addr[0])), port))
 		if db_cursor.rowcount == 1:
@@ -705,7 +743,7 @@ def handle_storage_server(conn, addr):
 					WHERE fs.server_id = s.id AND fs.file_id = f.id
 					AND login = ? AND path = ? AND ip = ?
 				);
-			''', (login, path, ip))
+			''', (login, path, ip)) # TODO: check port?
 			if db_cursor.rowcount == 1:
 				db_conn.commit()
 				storage_server_response(conn, 0x00) # OK
@@ -718,7 +756,7 @@ def handle_storage_server(conn, addr):
 					(SELECT id FROM servers WHERE ip = ?),
 					(SELECT id FROM file_structure WHERE login = ? AND path = ?)
 				);
-			''', (ip, login, path))
+			''', (ip, login, path)) # TODO: check port?
 			if db_cursor.rowcount == 1:
 				db_conn.commit()
 				storage_server_response(conn, 0x00) # OK
@@ -740,7 +778,7 @@ def handle_storage_server(conn, addr):
 				# TODO: if not ALLOW_LESS_REPLICAS: give some error to user?
 				log("Did not found server to replicate to")
 			elif row[1] < 2:
-				file_copy_or_replicate(login, path, row[0], 1)
+				file_copy_or_replicate(login, path, row[0])
 
 		else:
 			storage_server_response(conn, 0x81) # Wrong request id
