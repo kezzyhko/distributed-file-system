@@ -1,6 +1,5 @@
 from socket import socket
 from threading import Thread, get_ident
-from os import system
 import os
 from pathlib import Path
 from sys import stdout
@@ -32,11 +31,14 @@ def log(string):
 	print("%s: %06d | %s" % (strftime("%H:%M:%S", gmtime(time.time())), get_ident(), string))
 	stdout.flush()
 
-def int_to_bytes(n):
+def int_to_bytes(n, min_len=1):
 	res = b''
 	while n > 0:
 		n, b = divmod(n, 256)
 		res = bytes([b]) + res
+
+	if len(res) < min_len:
+		res = bytes(min_len - len(res)) + res
 
 	return res
 
@@ -78,7 +80,7 @@ def send_i_was_born():
 	conn = socket()
 	conn.connect((MASTER_IP, MASTER_PORT))
 
-	conn.send(b'\x00' + int_to_bytes(PORT))
+	conn.send(b'\x00' + int_to_bytes(PORT, 2))
 	data = conn.recv(1)
 	if data != b'\x00':
 		exit(0)
@@ -107,112 +109,135 @@ def send_response(conn, status_code):
 todo_list = dict()
 
 def get_file_from_server(server_ip, server_port, token, file_path):
-	conn = socket()
-	conn.connect((int_to_ip(server_ip), server_port))
+	try:
+		conn = socket()
+		conn.connect((int_to_ip(server_ip), server_port))
 
-	conn.send(token)
-	status_code, file_size = get_int(conn, 1), get_int(conn, 4)
+		conn.send(token)
+		status_code= get_int(conn, 1)
 
-	f = open(file_path, "wb")
+		if status_code != 0:
+			log("Something went wrong")
+			conn.close()
 
-	block_size = 1024
-	for i in range(0, file_size, block_size):
-		data = conn.recv(block_size)
-		f.write(data)
+		file_size = get_int(conn, 4)
 
-	data = conn.recv(file_size % block_size)
-	f.write(data)
+		f = open(file_path, "wb")
 
-	f.close()
-	conn.close()
+		block_size = 1024
+
+		i = 0
+		while i < file_size:
+			data = conn.recv(block_size if block_size < (file_size - i) else (file_size - i))
+			i += len(data)
+			f.write(data)
+
+		f.close()
+		conn.close()
+
+		log("Got file from server: " + file_path)
+
+		send_report_to_name_server('created', 'file', file_path)
+
+		log("Sent report to Name Server")
+
+	except Exception as ex:
+		log("EXCEPTION: " + ex)
 
 
 # MAIN FUNCTION
 def handle_ns_request(conn, addr):
-	log('Got connection from Name Server')
-	id = get_int(conn)
+	try:
+		log('Got connection from Name Server')
+		id = get_int(conn)
 
-	if (id == 0x00): # Send the file to user 
-		token = get_data(conn, 16)
-		file_path = get_data(conn, get_int(conn)).decode('utf-8')
+		if (id == 0x00): # Send the file to user 
+			token = get_data(conn, 16)
+			file_path = get_data(conn, get_int(conn)).decode('utf-8')
 
-		log("Got 'send file' request from Name server: " + hex(int.from_bytes(token, "big"))[2::] + ", " + file_path)
 
-		if (Path(file_path).is_file()):
-			file_size = Path(file_path).stat().st_size
-			todo_list[token] = ('send', file_size, file_path)
+			if (Path(file_path).is_file()):
+				file_size = Path(file_path).stat().st_size
+				todo_list[token] = ('send', file_size, file_path)
+				conn.send(b"\x00")
+				log("Got 'send file' request from Name server: " + hex(int.from_bytes(token, "big"))[2::] + ", " + file_path)
+			else:
+				conn.send(b"\x01")
+				log("Got 'send file' request from Name server: " + hex(int.from_bytes(token, "big"))[2::] + ", " + file_path + ", but something went wrong")
+
+
+		elif (id == 0x01): # Get the file from user
+			token = get_data(conn, 16)
+
+			file_size = get_int(conn, 4)
+
+			path_len = get_int(conn, 1)
+
+			file_path = get_data(conn, path_len).decode("UTF-8")
+
+			todo_list[token] = ('get', file_size, file_path)
 			conn.send(b"\x00")
-		else:
-			conn.send(b"\x01")
+
+			log("Got 'get file' request from Name server: " + hex(int.from_bytes(token, "big"))[2::] + ", " + file_path + ", " + str(file_size))
+
+		elif (id == 0x02): # Get the file from server
+			token = get_data(conn, 16)
+			server_ip = get_int(conn, 4)
+			server_port = get_int(conn, 2)
+
+			path_len = get_int(conn, 1)
+
+			file_path = get_data(conn, path_len).decode('utf-8')
+
+			p = Thread(target = get_file_from_server, args = (server_ip, server_port, token, file_path))
+			p.start()
+			conn.send(b"\x00")
+
+			log("Got 'get server file' request from Name server: " + hex(int.from_bytes(token, "big"))[2::] + ", " + file_path + ", " + str(server_ip))
 
 
-	elif (id == 0x01): # Get the file from user
-		token = get_data(conn, 16)
+		elif (id == 0x03): # Eval of the given command
+			command = get_data(conn, get_int(conn, 2)).decode("utf-8")
 
-		file_size = get_int(conn, 4)
+			log("Got command from Name server: " + command)
+			try:
+				exec(str(command))
+				log("Result: OK")
+				conn.send(b'\x00')
+			except Exception as ex:
+				log("Result: NOT ok, " + str(ex))
+				conn.send(b'\x01')
 
-		path_len = get_int(conn, 1)
+		elif (id == 0x04): # Ping-pong
+			conn.send(b"\x00")
+			log("Got 'ping' from Name server")
 
-		file_path = get_data(conn, path_len).decode("UTF-8")
+		else: # unknown id
+			conn.send(b"\x02")
+			pass # TODO: return error
 
-		log("Got 'get file' request from Name server: " + hex(int.from_bytes(token, "big"))[2::] + ", " + file_path + ", " + str(file_size))
-
-		todo_list[token] = ('get', file_size, file_path)
-		conn.send(b"\x00")
-
-	elif (id == 0x02): # Get the file from server
-		token = get_data(conn, 16)
-		server_ip = get_int(conn, 4)
-		server_port = get_int(conn, 2)
-
-		path_len = get_int(conn, 1)
-
-		file_path = get_data(conn, path_len).decode('utf-8')
-
-		log("Got 'get server file' request from Name server: " + hex(int.from_bytes(token, "big"))[2::] + ", " + file_path + ", " + str(server_ip))
-
-		p = Thread(target = get_file_from_server, args = (server_ip, server_port, token, file_path))
-		p.start()
-		conn.send(b"\x00")
-
-	elif (id == 0x03): # Eval of the given command
-		command = get_data(conn, get_int(conn, 2)).decode("utf-8")
-
-		log("Got command from Name server: " + command)
-		try:
-			exec(str(command))
-			log("Result: OK")
-			conn.send(b'\x00')
-		except Exception as ex:
-			log("Result: NOT ok, " + str(ex))
-			conn.send(b'\x01')
-
-	elif (id == 0x04): # Ping-pong
-		conn.send(b"\x00")
-		log("Got 'ping' from Name server")
-
-	else: # unknown id
-		conn.send(b"\x02")
-		pass # TODO: return error
-
-	conn.close()
+		conn.close()
+	except Exception as ex:
+		log("EXCEPTION: " + ex)
 
 
 def handle_client_request(conn, addr):
-	log('Got connection from Client ' + addr[0])
-	token = get_data(conn, 16)
+	try:
+		log('Got connection from Client ' + addr[0])
+		token = get_data(conn, 16)
 
-	if token not in todo_list:
-		conn.send(b"\x01")
-		return
+		if token not in todo_list:
+			log("Token does not exist")
+			conn.send(b"\x01")
+			conn.close()
+			return
 
-	action, file_size, file_path = todo_list[token]
+		action, file_size, file_path = todo_list[token]
 
-	block_size = 1024
+		block_size = 1024
 
-	if action == "send":
-		try:
-			conn.send(b'\x00' + int_to_bytes(file_size))
+		if action == "send":
+			conn.send(b'\x00' + int_to_bytes(file_size, 4))
 
 			f = open(file_path, 'rb')
 
@@ -222,11 +247,8 @@ def handle_client_request(conn, addr):
 
 			f.close()
 
-			log('Send file ' + file_path + ' to Client ' + addr[0])
-		except Exception as ex:
-			log(ex)
-	elif action == "get":
-		try:
+			log('Sent file ' + file_path + ' to Client ' + addr[0])
+		elif action == "get":
 			f = open(file_path, 'wb')
 
 			i = 0
@@ -240,9 +262,12 @@ def handle_client_request(conn, addr):
 			log('Got file ' + file_path + ' from Client ' + addr[0])
 
 			send_report_to_name_server('created', 'file', file_path)
-		except Exception as ex:
-			log(ex)
-	conn.close()	
+
+			log("Sent report to Name Server")
+
+		conn.close()	
+	except Exception as ex:
+		log("EXCEPTION: " + ex)
 
 
 # START ACCEPTING CONNECTIONS
