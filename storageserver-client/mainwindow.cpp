@@ -8,6 +8,7 @@
 #include <QGraphicsPixmapItem>
 #include <QHostAddress>
 #include <QFileDialog>
+#include <QProgressDialog>
 
 using namespace std;
 
@@ -484,28 +485,36 @@ std::map<std::string, QByteArray> MainWindow::sendDataToStorageServer(
             int sent=0;
             int percent = 0;
             QMessageBox messageBox;
-            messageBox.setText("Upload started");
-            messageBox.exec();
+            QProgressDialog * progress = new QProgressDialog("Uploading file...", "Cancel", 0, 100, this, Qt::WindowSystemMenuHint | Qt::WindowTitleHint);
+            progress->setWindowModality(Qt::WindowModal);
+            progress->show();
+
             for(int i=0; i<size;i++){
                 socket->write(QByteArray(1, file.at(i)));
                 socket->waitForBytesWritten(waitTime);
                 sent++;
-                if(socket->state()!=socket->ConnectedState){
+//                if(socket->state()!=socket->ConnectedState){
+//                    break;
+//                }
+                if (progress->wasCanceled()){
+                    socket->close();
                     break;
                 }
-
-                if(percent<=sent*100/size){
-                    qDebug()<<"Loading: "+QString::number(percent)+"%";
-                    percent+=10;
-                    messageBox.setText("Loading: "+QString::number(percent)+"%");
-                    messageBox.exec();
+                if(sent%10000==0){
+                    progress->setValue((sent*100)/size);
+                    QCoreApplication::processEvents();
                 }
+
             }
+            progress->cancel();
             if(sent==size){
+                messageBox.setText("Upload finished");
+                messageBox.exec();
                 resultMap.insert(pair<string, QByteArray>("code", QByteArray(1, 0)));
             }else{
                 resultMap.insert(pair<string, QByteArray>("code", QByteArray(1, 1)));
             }
+
             qDebug()<<bytesToInt(resultMap.at("code"));
             socket->close();
         }else if(type==CMD_READ_FILE){
@@ -515,7 +524,11 @@ std::map<std::string, QByteArray> MainWindow::sendDataToStorageServer(
             }
             QByteArray code_ = socket->read(1);
             qDebug()<<"code"<<code_;
+            
+            QProgressDialog progress("Downloadng file...", "Cancel", 0, 100, this, Qt::WindowSystemMenuHint | Qt::WindowTitleHint);
+               progress.setWindowModality(Qt::WindowModal);
 
+            progress.show();
             if(bytesToInt(code_)==0){
                 while(socket->bytesAvailable()<4&&timeout-->0){
                     socket->waitForReadyRead(waitTime);
@@ -524,16 +537,27 @@ std::map<std::string, QByteArray> MainWindow::sendDataToStorageServer(
                 qDebug()<<"size"<<size;
                 QByteArray data = QByteArray();
                 while(data.length()<size){
+                    if(data.length()%10000==0){
+                        progress.setValue(data.length()*100/size);
+                        QCoreApplication::processEvents();
+                    }
                     qDebug()<<"size__"<<data.length();
                     timeout=20;
-                    if(socket->state()!=socket->ConnectedState){
+                    if (progress.wasCanceled()){
+                        socket->close();
                         break;
                     }
+
                     while(socket->bytesAvailable()==0&&timeout-->0){
                         socket->waitForReadyRead(waitTime);
                     }
+//                    if(socket->state()!=socket->ConnectedState){
+//                        break;
+//                    }
+                    
                     data.append(socket->readAll());
                 }
+                progress.cancel();
                 qDebug()<<"size end"<<data.length();
                 if(size==data.length()){
                     resultMap.insert(pair<string, QByteArray>("code", QByteArray(1, 0)));
@@ -740,10 +764,26 @@ void MainWindow::getFileInfo(){
     }else if(bytesToInt(resultMap.at("code"))!=0x00){
         makePopup(resultMap.at("code").at(0));
     }else{
-        qDebug()<<resultMap.at("message");
+        QString message = resultMap.at("message");
+        QStringList list = message.split(" ");
+        QString text = "";
+        text.append("Name of file:\t"+currentWidget->filename+"\n");
+        text.append("Size of file:\t"+list.at(0)+"\n");
+        text.append("Qty of replicas:\t"+list.at(1)+"\n");
+        text.append("Creation date:\t"+list.at(2)+"\n");
+        text.append("Creation time:\t"+list.at(3)+"\n");
+        QMessageBox messageBox;
+        messageBox.setText(text);
+        messageBox.exec();
     }
 }
 void MainWindow::deleteFile(){
+    QMessageBox::StandardButton reply;
+    reply = QMessageBox::question(this, "File delete", "This file will be permanently deleted. Are you sure?",
+                               QMessageBox::Yes|QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
     QByteArray data;
     data.append(CMD_FILE_DELETE);
     data.append(token);
@@ -826,12 +866,25 @@ void MainWindow::copyFile(){
             for(int i=0; i<list.size(); i++){
                 QStringList parsedList = list.at(i).split(" ");
                 if(parsedList.at(0)=="f"){
-                    if(!parsedList.at(1).contains("/")){
-                        addFile(parsedList.at(1), false);
+                    QString filename = "";
+                    for(int i=1; i<parsedList.size(); i++){
+                        filename+=parsedList.at(i);
+                        if(i<parsedList.size()-1){
+                            filename+=" ";
+                        }
+
                     }
+                    addFile(filename, false);
                 }else if(parsedList.at(0)=="d"){
                     if(!parsedList.at(1).contains("/")){
-                        addFile(parsedList.at(1), true);
+                        QString filename = "";
+                        for(int i=1; i<parsedList.size(); i++){
+                            filename+=parsedList.at(i);
+                            if(i<parsedList.size()-1){
+                                filename+=" ";
+                            }
+                        }
+                        addFile(filename, true);
                     }
                 }
             }
@@ -847,7 +900,7 @@ void MainWindow::moveFile(){
         fullname=currentWidget->filename;
     }
     bool ok;
-    QString text = QInputDialog::getText(this, "Copy file to filename",
+    QString text = QInputDialog::getText(this, "Move file to filename",
                                          "Full path:", QLineEdit::Normal, "", &ok, Qt::WindowSystemMenuHint | Qt::WindowTitleHint);
     if (!ok){
         return;
@@ -888,12 +941,25 @@ void MainWindow::moveFile(){
             for(int i=0; i<list.size(); i++){
                 QStringList parsedList = list.at(i).split(" ");
                 if(parsedList.at(0)=="f"){
-                    if(!parsedList.at(1).contains("/")){
-                        addFile(parsedList.at(1), false);
+                    QString filename = "";
+                    for(int i=1; i<parsedList.size(); i++){
+                        filename+=parsedList.at(i);
+                        if(i<parsedList.size()-1){
+                            filename+=" ";
+                        }
+
                     }
+                    addFile(filename, false);
                 }else if(parsedList.at(0)=="d"){
                     if(!parsedList.at(1).contains("/")){
-                        addFile(parsedList.at(1), true);
+                        QString filename = "";
+                        for(int i=1; i<parsedList.size(); i++){
+                            filename+=parsedList.at(i);
+                            if(i<parsedList.size()-1){
+                                filename+=" ";
+                            }
+                        }
+                        addFile(filename, true);
                     }
                 }
             }
@@ -995,12 +1061,25 @@ void MainWindow::changeDir(QString nextDir, bool nextFlag, bool readDir){
             for(int i=0; i<list.size(); i++){
                 QStringList parsedList = list.at(i).split(" ");
                 if(parsedList.at(0)=="f"){
-                    if(!parsedList.at(1).contains("/")){
-                        addFile(parsedList.at(1), false);
+                    QString filename = "";
+                    for(int i=1; i<parsedList.size(); i++){
+                        filename+=parsedList.at(i);
+                        if(i<parsedList.size()-1){
+                            filename+=" ";
+                        }
+
                     }
+                    addFile(filename, false);
                 }else if(parsedList.at(0)=="d"){
                     if(!parsedList.at(1).contains("/")){
-                        addFile(parsedList.at(1), true);
+                        QString filename = "";
+                        for(int i=1; i<parsedList.size(); i++){
+                            filename+=parsedList.at(i);
+                            if(i<parsedList.size()-1){
+                                filename+=" ";
+                            }
+                        }
+                        addFile(filename, true);
                     }
                 }
             }
@@ -1012,6 +1091,12 @@ void MainWindow::openFolder(){
     changeDir(currentWidget->filename, true, true);
 }
 void MainWindow::deleteFolder(){
+    QMessageBox::StandardButton reply;
+    reply = QMessageBox::question(this, "Folder delete", "This folder will be permanently deleted with all files inside. Are you sure?",
+                               QMessageBox::Yes|QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
     QByteArray data;
     data.append(CMD_DELETE_FOLDER);
     data.append(token);
@@ -1042,14 +1127,17 @@ void MainWindow::deleteFolder(){
 }
 
 int MainWindow::bytesToInt(QByteArray array){
+    qDebug()<<array.toHex();
     if(array.size()>4){
         return -1;
     }else{
+
         int result = 0;
-        for(int i=array.size()-1; i>=0; i--){
+        for(int i=0; i<array.size(); i++){
             result*=256;
-            qDebug()<<"res"<<result;
             result+=(unsigned char)array.at(i);
+            qDebug()<<"pos:"<<i<<"data:"<<(unsigned int)(unsigned char)array.at(i);
+            qDebug()<<"res"<<result;
         }
         return result;
     }
